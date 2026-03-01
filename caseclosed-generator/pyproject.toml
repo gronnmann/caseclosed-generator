@@ -1,7 +1,14 @@
 [project]
 name = "caseclosed-generator"
 version = "0.1.0"
-description = "Add your description here"
+description = "A modular murder mystery engine that generates Case Closed style detective games"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "httpx>=0.28.1",
+    "openai>=2.24.0",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.13.1",
+    "rich>=14.3.3",
+    "typer>=0.24.1",
+]

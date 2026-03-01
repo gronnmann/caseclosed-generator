@@ -1,6 +1,4 @@
-def main():
-    print("Hello from caseclosed-generator!")
-
+from caseclosed.cli import app
 
 if __name__ == "__main__":
-    main()
+    app()
