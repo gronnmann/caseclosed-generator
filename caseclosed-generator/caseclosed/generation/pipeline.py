@@ -18,6 +18,7 @@ from caseclosed.generation.suspects import generate_suspects
 from caseclosed.generation.truth import generate_truth
 from caseclosed.models.case import Case, GenerationPhase
 from caseclosed.models.evidence import ImageEvidence
+from caseclosed.models.suspect import Suspect
 from caseclosed.persistence import save_case
 
 console = Console()
@@ -156,13 +157,21 @@ def _step_suspects(case: Case) -> None:
             return
 
 
+def _portrait_exists(case: Case, suspect: Suspect) -> bool:
+    """Check if a suspect's portrait image file actually exists on disk."""
+    if not suspect.portrait_filename:
+        return False
+    from caseclosed.persistence import images_dir
+    return (images_dir(case.id) / suspect.portrait_filename).exists()
+
+
 def _step_suspect_portraits(case: Case) -> None:
     """Generate portrait images for each suspect (resumable)."""
     from caseclosed.generation.suspects import generate_suspect_portrait_prompt
     from caseclosed.llm.client import generate_image
     from caseclosed.persistence import save_image
 
-    remaining = [s for s in case.suspects if s.portrait_filename is None]
+    remaining = [s for s in case.suspects if not _portrait_exists(case, s)]
     total = len(case.suspects)
     done = total - len(remaining)
 
@@ -179,7 +188,7 @@ def _step_suspect_portraits(case: Case) -> None:
                 save_case(case)
 
             try:
-                image_data = generate_image(suspect.portrait_prompt)
+                image_data = generate_image(suspect.portrait_prompt, aspect_ratio="1:1")
                 filename = f"portrait-{suspect.name.lower().replace(' ', '-')}.png"
                 save_image(case.id, filename, image_data)
                 suspect.portrait_filename = filename

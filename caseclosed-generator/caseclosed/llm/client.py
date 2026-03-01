@@ -112,31 +112,63 @@ def generate_text(
 def generate_image(
     prompt: str,
     model: str | None = None,
+    aspect_ratio: str | None = None,
 ) -> bytes:
-    """Generate an image via OpenRouter image model. Returns raw image bytes.
+    """Generate an image via OpenRouter's chat completions endpoint.
 
-    Retries up to MAX_RETRIES times on transient failures.
+    OpenRouter uses the /chat/completions endpoint with modalities=["image","text"]
+    instead of a dedicated /images/generations endpoint.
+    Returns raw image bytes. Retries up to MAX_RETRIES times.
     """
     import base64
 
-    client = get_client()
+    import httpx
+
     model = model or settings.default_image_model
 
     last_error: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            response = client.images.generate(
-                model=model,
-                prompt=prompt,
-                n=1,
-                size="1024x1024",
-                response_format="b64_json",
+            # OpenRouter image generation goes through chat completions
+            response = httpx.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.openrouter_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "modalities": ["image", "text"],
+                    **({
+                        "image_config": {"aspect_ratio": aspect_ratio}
+                    } if aspect_ratio else {}),
+                },
+                timeout=120.0,
             )
+            response.raise_for_status()
+            result = response.json()
 
-            b64_data = response.data[0].b64_json
-            if b64_data is None:
-                raise RuntimeError("Image generation returned no data")
-            return base64.b64decode(b64_data)
+            # Extract image from response
+            message = result["choices"][0]["message"]
+            images = message.get("images")
+            if not images:
+                raise RuntimeError(
+                    f"No images in response. Content: {str(message.get('content', ''))[:200]}"
+                )
+
+            image_url: str = images[0]["image_url"]["url"]
+
+            # Handle base64 data URLs
+            if image_url.startswith("data:"):
+                # Format: data:image/png;base64,<data>
+                b64_part = image_url.split(",", 1)[1]
+                return base64.b64decode(b64_part)
+
+            # Handle regular URLs — download the image
+            img_response = httpx.get(image_url, timeout=60.0)
+            img_response.raise_for_status()
+            return img_response.content
         except Exception as e:
             last_error = e
             if attempt < MAX_RETRIES:

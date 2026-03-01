@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     openrouter_api_key: str
     default_model: str = "google/gemini-2.5-flash"
-    default_image_model: str = "openai/dall-e-3"
+    default_image_model: str = "google/gemini-2.0-flash-exp:free"
     language: str = "en"
     cases_dir: Path = Path("./cases")
 

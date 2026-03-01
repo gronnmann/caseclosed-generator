@@ -365,3 +365,246 @@ def _suggest_reconciliation(case: Case, edited_target: str) -> None:
         for s in suggestions:
             console.print(s)
         console.print("[dim]Use 'caseclosed edit' to update these if needed. Or edit case.json directly.[/dim]")
+
+
+# --- Redo Command ---
+
+_REDO_TARGETS = [
+    "truth", "suspects", "portraits", "portrait",
+    "episodes", "evidence-plan", "evidence", "image", "images",
+]
+
+
+@app.command()
+def redo(
+    case_id: Annotated[str, typer.Argument(help="Case ID")],
+    target: Annotated[str, typer.Argument(help="What to redo: truth, suspects, portraits, portrait, episodes, evidence-plan, evidence, image, images")],
+    name_or_id: Annotated[str | None, typer.Argument(help="Suspect name (for portrait) or evidence ID (for evidence/image)")] = None,
+) -> None:
+    """Regenerate a specific part of a case from scratch."""
+    case = load_case(case_id)
+
+    if target not in _REDO_TARGETS:
+        console.print(f"[red]Unknown target: {target}[/red]")
+        console.print(f"Valid targets: {', '.join(_REDO_TARGETS)}")
+        raise typer.Exit(code=1)
+
+    if target == "truth":
+        _redo_truth(case)
+    elif target == "suspects":
+        _redo_suspects(case)
+    elif target == "portraits":
+        _redo_portraits(case)
+    elif target == "portrait":
+        if not name_or_id:
+            console.print("[red]Please specify a suspect name.[/red]")
+            raise typer.Exit(code=1)
+        _redo_portrait(case, name_or_id)
+    elif target == "episodes":
+        _redo_episodes(case)
+    elif target == "evidence-plan":
+        _redo_evidence_plan(case)
+    elif target == "evidence":
+        if not name_or_id:
+            console.print("[red]Please specify an evidence ID.[/red]")
+            raise typer.Exit(code=1)
+        _redo_evidence(case, name_or_id)
+    elif target == "image":
+        if not name_or_id:
+            console.print("[red]Please specify an evidence ID.[/red]")
+            raise typer.Exit(code=1)
+        _redo_image(case, name_or_id)
+    elif target == "images":
+        _redo_images(case)
+
+
+def _redo_truth(case: Case) -> None:
+    from caseclosed.generation.truth import generate_truth
+    from caseclosed.generation.pipeline import _display_truth
+
+    console.print("[bold blue]Regenerating case truth...[/bold blue]")
+    case.truth = generate_truth(
+        premise=case.premise,
+        language=case.language,
+        difficulty=case.metadata.difficulty if case.metadata else None,
+    )
+    save_case(case)
+    _display_truth(case)
+    console.print("[green]✓ Truth regenerated.[/green]")
+    _suggest_reconciliation(case, "truth")
+
+
+def _redo_suspects(case: Case) -> None:
+    from caseclosed.generation.suspects import generate_suspects
+    from caseclosed.generation.pipeline import _display_suspects
+
+    console.print("[bold blue]Regenerating suspects...[/bold blue]")
+    case.suspects = generate_suspects(case)
+    save_case(case)
+    _display_suspects(case)
+    console.print("[green]✓ Suspects regenerated (portraits cleared).[/green]")
+
+
+def _redo_portraits(case: Case) -> None:
+    """Regenerate portrait images for ALL suspects."""
+    from caseclosed.generation.suspects import generate_suspect_portrait_prompt
+    from caseclosed.llm.client import generate_image
+    from caseclosed.persistence import save_image
+
+    if not case.suspects:
+        console.print("[yellow]No suspects to generate portraits for.[/yellow]")
+        return
+
+    for i, suspect in enumerate(case.suspects, 1):
+        console.print(f"\n[bold blue]Generating portrait [{i}/{len(case.suspects)}]: {suspect.name}[/bold blue]")
+        suspect.portrait_prompt = generate_suspect_portrait_prompt(suspect, case.language)
+        save_case(case)
+
+        try:
+            image_data = generate_image(suspect.portrait_prompt, aspect_ratio="1:1")
+            filename = f"portrait-{suspect.name.lower().replace(' ', '-')}.png"
+            save_image(case.id, filename, image_data)
+            suspect.portrait_filename = filename
+            console.print(f"  [green]✓[/green] Saved: {filename}")
+        except Exception as e:
+            console.print(f"  [red]✗ Portrait generation failed: {e}[/red]")
+
+        save_case(case)
+
+    console.print("\n[green]✓ All portraits regenerated.[/green]")
+
+
+def _redo_portrait(case: Case, name: str) -> None:
+    """Regenerate portrait for a single suspect."""
+    from caseclosed.generation.suspects import generate_suspect_portrait_prompt
+    from caseclosed.llm.client import generate_image
+    from caseclosed.persistence import save_image
+
+    suspect = next((s for s in case.suspects if s.name.lower() == name.lower()), None)
+    if not suspect:
+        console.print(f"[red]Suspect not found: {name}[/red]")
+        console.print(f"Available: {', '.join(s.name for s in case.suspects)}")
+        return
+
+    console.print(f"[bold blue]Regenerating portrait: {suspect.name}[/bold blue]")
+    suspect.portrait_prompt = generate_suspect_portrait_prompt(suspect, case.language)
+    save_case(case)
+
+    try:
+        image_data = generate_image(suspect.portrait_prompt, aspect_ratio="1:1")
+        filename = f"portrait-{suspect.name.lower().replace(' ', '-')}.png"
+        save_image(case.id, filename, image_data)
+        suspect.portrait_filename = filename
+        save_case(case)
+        console.print(f"[green]✓ Portrait saved: {filename}[/green]")
+    except Exception as e:
+        console.print(f"[red]✗ Portrait generation failed: {e}[/red]")
+
+
+def _redo_episodes(case: Case) -> None:
+    from caseclosed.generation.episodes import generate_episodes
+    from caseclosed.generation.pipeline import _display_episodes
+
+    console.print("[bold blue]Regenerating episodes...[/bold blue]")
+    case.episodes = generate_episodes(case)
+    save_case(case)
+    _display_episodes(case)
+    console.print("[green]✓ Episodes regenerated.[/green]")
+
+
+def _redo_evidence_plan(case: Case) -> None:
+    from caseclosed.generation.evidence_plan import generate_evidence_plan
+    from caseclosed.generation.pipeline import _display_evidence_plan
+
+    console.print("[bold blue]Regenerating evidence plan...[/bold blue]")
+    case.evidence_plan = generate_evidence_plan(case)
+
+    for ep in case.episodes:
+        ep.evidence_ids = [
+            item.id for item in case.evidence_plan
+            if item.introduced_in_episode == ep.number
+            or ep.number in item.also_used_in_episodes
+        ]
+
+    save_case(case)
+    _display_evidence_plan(case)
+    console.print("[green]✓ Evidence plan regenerated.[/green]")
+
+
+def _redo_evidence(case: Case, evidence_id: str) -> None:
+    from caseclosed.generation.evidence import generate_evidence_content
+
+    plan_item = next((p for p in case.evidence_plan if p.id == evidence_id), None)
+    if not plan_item:
+        console.print(f"[red]Evidence plan item not found: {evidence_id}[/red]")
+        ids = [p.id for p in case.evidence_plan]
+        console.print(f"Available: {', '.join(ids)}")
+        return
+
+    console.print(f"[bold blue]Regenerating evidence: {plan_item.title}[/bold blue]")
+    already_generated_ids = [
+        getattr(e, "plan_id", None) for e in case.evidence
+        if getattr(e, "plan_id", None) != evidence_id
+    ]
+
+    new_evidence = generate_evidence_content(case, plan_item, already_generated_ids)
+
+    # Replace existing or append
+    idx = next(
+        (i for i, e in enumerate(case.evidence) if getattr(e, "plan_id", None) == evidence_id),
+        None,
+    )
+    if idx is not None:
+        case.evidence[idx] = new_evidence
+    else:
+        case.evidence.append(new_evidence)
+
+    save_case(case)
+    console.print(f"[green]✓ Evidence regenerated: {plan_item.title} ({plan_item.type})[/green]")
+
+
+def _redo_image(case: Case, evidence_id: str) -> None:
+    from caseclosed.generation.evidence import generate_evidence_image
+    from caseclosed.models.evidence import ImageEvidence
+
+    evidence_item = next(
+        (e for e in case.evidence if getattr(e, "plan_id", None) == evidence_id),
+        None,
+    )
+    if not evidence_item:
+        console.print(f"[red]Evidence not found: {evidence_id}[/red]")
+        return
+    if not isinstance(evidence_item, ImageEvidence):
+        console.print(f"[red]Evidence '{evidence_id}' is not an image type (it's {evidence_item.type}).[/red]")
+        return
+
+    console.print(f"[bold blue]Regenerating image: {evidence_item.caption}[/bold blue]")
+    try:
+        filename = generate_evidence_image(case, evidence_item)
+        evidence_item.image_filename = filename
+        save_case(case)
+        console.print(f"[green]✓ Image saved: {filename}[/green]")
+    except Exception as e:
+        console.print(f"[red]✗ Image generation failed: {e}[/red]")
+
+
+def _redo_images(case: Case) -> None:
+    from caseclosed.generation.evidence import generate_evidence_image
+    from caseclosed.models.evidence import ImageEvidence
+
+    image_items = [e for e in case.evidence if isinstance(e, ImageEvidence)]
+    if not image_items:
+        console.print("[yellow]No image evidence items found.[/yellow]")
+        return
+
+    for i, img in enumerate(image_items, 1):
+        console.print(f"\n[bold blue]Regenerating image [{i}/{len(image_items)}]: {img.caption}[/bold blue]")
+        try:
+            filename = generate_evidence_image(case, img)
+            img.image_filename = filename
+            console.print(f"  [green]✓[/green] Saved: {filename}")
+        except Exception as e:
+            console.print(f"  [red]✗ Image generation failed: {e}[/red]")
+        save_case(case)
+
+    console.print(f"\n[green]✓ All {len(image_items)} images regenerated.[/green]")

@@ -16,6 +16,11 @@ def generate_suspects(case: Case) -> list[Suspect]:
     """Generate suspects for the mystery."""
     messages = suspects_prompt(case)
     response = generate_structured(SuspectsResponse, messages)
+    # Strip portrait fields — the LLM may hallucinate values for these,
+    # but they should only be set by actual image generation.
+    for s in response.suspects:
+        s.portrait_prompt = None
+        s.portrait_filename = None
     return response.suspects
 
 
