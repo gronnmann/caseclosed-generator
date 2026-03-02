@@ -278,7 +278,8 @@ Generate a realistic police interrogation transcript. Include:
 - Probing questions that create tension
 - The suspect's personality should come through in their responses
 - If this is the killer, their answers should be plausible but contain subtle inconsistencies
-- IMPORTANT: Use the interrogating detective from CASE PERSONNEL as the "interviewer" field""",
+- IMPORTANT: Use the interrogating detective from CASE PERSONNEL as the "interviewer" field
+- KEEP IT SHORT: Maximum 15-20 dialogue exchanges total.""",
         "poi_form": """\
 Generate a filled-out Person of Interest form with all personal details. \
 Use the suspect's established physical description and personal information.""",
@@ -373,12 +374,30 @@ EVIDENCE PLAN:
 - Introduced in episode: {plan_item.introduced_in_episode}
 - Also used in episodes: {plan_item.also_used_in_episodes}
 {suspect_info}{personnel_info}
-CASE TRUTH (for consistency — the content must NOT contradict these facts):
+CASE TRUTH (for consistency only — do NOT leak extra facts from this section):
 - Victim: {truth.victim.name}, died at crime scene: {truth.crime_scene}
 - Cause of death: {truth.victim.cause_of_death}
 - Killer: {truth.killer_name}
 - Method: {truth.method}
 - Timeline: {_format_timeline(truth)}
+
+CONTENT SCOPE (CRITICAL):
+- This evidence must ONLY convey what is described in "Description" and "clue_reveals" field above.
+- Do NOT include additional facts, revelations, or connections from the case truth \
+that go beyond what this specific evidence item is designed to show.
+- The case truth above is provided ONLY to ensure consistency (no contradictions). \
+It is NOT a source of additional content to include.
+- If a suspect is the killer, their evidence may hint at subtle inconsistencies \
+(only if that is part of this evidence's purpose), but must NOT reveal information \
+beyond this item's designated scope.
+
+LENGTH GUIDELINES (important — keep evidence concise):
+- Interrogation transcripts: 15-20 exchanges maximum (1-2 printed pages).
+- Letters: 1 page maximum.
+- Raw text documents (reports, articles, notes): 1 page maximum.
+- Emails: half a page to 1 page.
+- Phone/SMS logs: only relevant entries plus optionally a few mundane ones for realism.
+- All evidence should be brief and factual like real investigation documents.
 
 SPECIFIC INSTRUCTIONS FOR THIS TYPE:
 {type_instructions.get(plan_item.type, "Generate appropriate content.")}

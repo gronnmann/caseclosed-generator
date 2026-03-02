@@ -651,3 +651,41 @@ def _redo_images(case: Case) -> None:
         save_case(case)
 
     console.print(f"\n[green]✓ All {len(image_items)} images regenerated.[/green]")
+
+
+# --- Export Command ---
+
+
+@app.command()
+def export(
+    case_id: Annotated[str | None, typer.Argument(help="Case ID to export")] = None,
+    evidence_id: Annotated[str | None, typer.Option("--id", help="Export only this evidence plan ID")] = None,
+) -> None:
+    """Export evidence to PDF (Typst, LaTeX, HTML)."""
+    if case_id is None:
+        cases = list_cases()
+        if not cases:
+            console.print("[yellow]No cases found.[/yellow]")
+            raise typer.Exit()
+
+        console.print("[bold]Available cases:[/bold]")
+        for i, c in enumerate(cases, 1):
+            console.print(f"  {i}. [cyan]{c.id}[/cyan] — {c.title or c.premise[:60]} [{c.generation_state.phase}]")
+
+        choice = console.input("\n[bold yellow]Select case number:[/bold yellow] ").strip()
+        try:
+            idx = int(choice) - 1
+            case_id = cases[idx].id
+        except (ValueError, IndexError):
+            console.print("[red]Invalid selection.[/red]")
+            raise typer.Exit(code=1)
+
+    case = load_case(case_id)
+
+    if not case.evidence:
+        console.print("[yellow]No evidence content to export.[/yellow]")
+        raise typer.Exit()
+
+    from caseclosed.export import export_case
+
+    export_case(case, evidence_id=evidence_id)
