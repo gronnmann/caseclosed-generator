@@ -15,7 +15,8 @@ class EvidencePlanItem(BaseModel):
 
     id: str
     type: Literal[
-        "interrogation", "poi_form", "letter", "image", "raw_text"
+        "interrogation", "poi_form", "letter", "image", "raw_text",
+        "phone_log", "sms_log", "email",
     ]
     title: str
     brief_description: str  # What this evidence contains/reveals
@@ -95,6 +96,7 @@ class Letter(BaseModel):
     date: str | None = None
     body_text: str
     letter_type: Literal["intro", "solution", "narrative"]
+    text_typst: str = ""  # Typst-formatted body (two newlines = newline, *bold*, _italic_)
 
 
 class ImageEvidence(BaseModel):
@@ -123,6 +125,58 @@ class RawText(BaseModel):
         "note",
         "other",
     ]
+    text_html: str = ""  # HTML-formatted version of the content
+    text_latex: str = ""  # LaTeX-formatted version of the content
+    text_typst: str = ""  # Typst-formatted version of the content
+
+
+class PhoneLogEntry(BaseModel):
+    timestamp: str  # e.g. "2024-03-15 14:32"
+    direction: Literal["incoming", "outgoing", "missed"]
+    other_party: str  # Name or phone number
+    duration: str = ""  # e.g. "2m 34s", empty for missed
+
+
+class PhoneLog(BaseModel):
+    """A phone call log for a person."""
+
+    type: Literal["phone_log"] = "phone_log"
+    plan_id: str
+    owner_name: str
+    phone_number: str
+    entries: list[PhoneLogEntry]
+
+
+class SmsMessage(BaseModel):
+    timestamp: str  # e.g. "2024-03-15 14:32"
+    direction: Literal["incoming", "outgoing"]
+    other_party: str  # Name or phone number
+    text: str
+
+
+class SmsLog(BaseModel):
+    """An SMS / text message log for a person."""
+
+    type: Literal["sms_log"] = "sms_log"
+    plan_id: str
+    owner_name: str
+    phone_number: str
+    messages: list[SmsMessage]
+
+
+class Email(BaseModel):
+    """An email message."""
+
+    type: Literal["email"] = "email"
+    plan_id: str
+    from_address: str
+    to_address: str
+    cc: str = ""
+    subject: str
+    date: str
+    body_text: str
+    text_typst: str = ""
+    text_html: str = ""
 
 
 # Discriminated union of all evidence content types
@@ -131,6 +185,9 @@ EvidenceItem = Annotated[
     | PersonOfInterestForm
     | Letter
     | ImageEvidence
-    | RawText,
+    | RawText
+    | PhoneLog
+    | SmsLog
+    | Email,
     Field(discriminator="type"),
 ]

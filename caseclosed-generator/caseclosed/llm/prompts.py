@@ -65,6 +65,33 @@ def truth_prompt(
     return [_system(language), _user("\n".join(parts))]
 
 
+def personnel_prompt(
+    case: Case,
+) -> list[dict[str, str]]:
+    """Prompt to generate recurring case personnel names."""
+    assert case.truth is not None
+    truth = case.truth
+
+    content = f"""\
+Generate the names of the recurring personnel involved in this investigation.
+
+CASE CONTEXT:
+- Victim: {truth.victim.name}
+- Crime scene: {truth.crime_scene}
+- Setting/language: {case.language}
+
+Generate realistic, consistent names for:
+- lead_detective: The senior detective overseeing the entire case (writes intro/solution letters)
+- interrogating_detective: The detective who conducts ALL suspect interrogations (must be the same person across every interrogation)
+- coroner: The medical examiner / coroner who handles autopsys and lab work
+- forensic_technician: The crime scene / forensic technician (optional, can be empty string)
+
+Names must match the cultural setting of the case. These characters will appear \
+consistently across all evidence items.\
+"""
+    return [_system(case.language), _user(content)]
+
+
 def suspects_prompt(
     case: Case,
 ) -> list[dict[str, str]]:
@@ -118,11 +145,29 @@ SUSPECTS: {', '.join(suspect_names)}
 
 Create a sequence of episodes. Each episode:
 - Has a title and a specific objective (a question the player must answer to progress)
-- Includes an intro_letter — narrative text from the lead investigator setting the scene
+- Includes an intro_letter -- narrative text from the lead investigator setting the scene
 - The first episode should introduce the case broadly
 - Each subsequent episode focuses on a specific aspect (alibis, forensics, connections, etc.)
 - The final episode's objective should lead the player to identify the killer
 - Objectives should be concrete: "Who was lying about being at the restaurant?" not "Find clues"
+
+PACING RULES (CRITICAL):
+- Do NOT single out or point at specific suspects in early episodes. Keep early episode \
+objectives broad (about the situation, the timeline, the scene) rather than naming suspects.
+- Do NOT hint at which specific evidence items the player should look at. The player must \
+discover connections on their own.
+- Gradually narrow the focus from general investigation to specific contradictions.
+
+HINTS:
+- Write exactly 2-3 hints for EACH episode, stored in the "hints" field.
+- Hints should help stuck players without outright spoiling the answer.
+- Progress from a gentle nudge (hint 1) to a stronger pointer (hint 3).
+
+PREVIOUS EPISODE SOLUTIONS:
+- For episode 1, leave "previous_episode_solution" empty (there is no prior episode).
+- For every subsequent episode, write a short "previous_episode_solution" that explains \
+the answer to the PREVIOUS episode's objective. This is shown to the player when they \
+advance, so they understand what they solved before moving on.
 
 The breadcrumb trail should make information from early episodes become meaningful later. \
 Players should feel like a genius when they connect the dots.\
@@ -165,7 +210,7 @@ EPISODES:
 
 For each evidence item, specify:
 - id: a short slug (e.g., "interrogation-ingrid", "newspaper-article", "crime-scene-photo")
-- type: one of "interrogation", "poi_form", "letter", "image", "raw_text"
+- type: one of "interrogation", "poi_form", "letter", "image", "raw_text", "phone_log", "sms_log", "email"
 - title: display title
 - brief_description: what this evidence contains
 - introduced_in_episode: which episode first presents this evidence
@@ -180,7 +225,20 @@ IMPORTANT:
 - Include at least 2-3 image evidence items (crime scene, key physical evidence, etc.)
 - Include supporting documents (newspaper articles, lab reports, phone messages, etc.)
 - CROSS-EPISODE REUSE: Some evidence introduced early should contain details that only \
-become meaningful in later episodes. This is crucial for the "breadcrumb trail" effect.\
+become meaningful in later episodes. This is crucial for the "breadcrumb trail" effect.
+
+EVIDENCE ANONYMIZATION (CRITICAL):
+- The evidence plan (id, title, brief_description, clue_reveals) is internal and can \
+reference suspect names freely for planning purposes.
+- However, the ACTUAL evidence content (generated later) must NOT put suspect names in \
+titles or headers of phone records, SMS logs, emails, or other documents. Instead, use \
+identifiers the player must cross-reference with POI forms: phone numbers, license plates, \
+email addresses, etc. However, if its natural in that context, names can be included too.
+- For example: a phone log title should be "Phone Records: +48 555 1234" (not \
+"Phone Records: John Smith"). The player figures out whose number it is from the POI form.
+- The clue_reveals field should describe what the player learns, using the actual names.
+- This creates investigative depth: players must study POI forms to connect documents \
+to suspects, rather than having it handed to them.\
 """
     return [_system(case.language), _user(content)]
 
@@ -219,25 +277,89 @@ Generate a realistic police interrogation transcript. Include:
 - Questions about alibi and whereabouts
 - Probing questions that create tension
 - The suspect's personality should come through in their responses
-- If this is the killer, their answers should be plausible but contain subtle inconsistencies""",
+- If this is the killer, their answers should be plausible but contain subtle inconsistencies
+- IMPORTANT: Use the interrogating detective from CASE PERSONNEL as the "interviewer" field""",
         "poi_form": """\
 Generate a filled-out Person of Interest form with all personal details. \
 Use the suspect's established physical description and personal information.""",
         "letter": """\
 Generate a letter. Match the tone to the letter_type:
-- "intro": Professional investigator tone, setting up the episode's focus
-- "solution": Revealing the truth, explaining how the evidence fits together
-- "narrative": In-character from someone involved in the case""",
+- "intro": Professional investigator tone, setting up the episode's focus. Use the lead detective from CASE PERSONNEL as the sender.
+- "solution": Revealing the truth, explaining how the evidence fits together. Use the lead detective as sender.
+- "narrative": In-character from someone involved in the case
+
+TYPST FORMATTING:
+Also fill the "text_typst" field with a Typst-formatted version of the letter body.
+Typst syntax rules:
+- Use two newlines to create a new line/paragraph
+- Use *text* for bold, _text_ for italic
+- Do NOT include the letter title, sender, recipient, or date in text_typst \
+-- only the body text itself""",
         "image": _build_image_type_instructions(case, plan_item),
         "raw_text": """\
 Generate the document content matching the format_hint. Make it feel authentic:
 - newspaper_article: journalistic tone, include byline and date
-- lab_report / autopsy_report: clinical, precise, technical
+- lab_report / autopsy_report: clinical, precise, technical. Use the coroner from CASE PERSONNEL as the author.
 - drug_guide: informational, medical reference style
 - phone_message: casual text message format
 - note: handwritten feel, possibly informal
-- other: match the brief_description style""",
+- other: match the brief_description style
+
+FORMATTED VERSIONS:
+Also fill these three additional fields with formatted versions of the content:
+- "text_html": HTML-formatted version (use semantic tags: <h1>, <p>, <strong>, <em>, <table>, etc.)
+- "text_latex": LaTeX-formatted version (use \\section, \\textbf, \\textit, \\begin{tabular}, etc.)
+- "text_typst": Typst-formatted version (use = heading, *bold*, _italic_, two newlines for paragraph breaks)
+Each formatted version should faithfully reproduce the "content" field's text with \
+appropriate markup for that format.""",
+        "phone_log": """\
+Generate a realistic phone call log. Include:
+- owner_name: who this phone belongs to
+- phone_number: their phone number
+- entries: a list of call log entries, each with:
+  - timestamp: date and time (e.g. "2024-03-15 14:32")
+  - direction: "incoming", "outgoing", or "missed"
+  - other_party: name or phone number of the other person
+  - duration: call length (e.g. "2m 34s"), empty for missed calls
+Make the timestamps realistic and consistent with the case timeline. Include calls \
+that are relevant to the investigation mixed with mundane everyday calls.""",
+        "sms_log": """\
+Generate a realistic SMS / text message log. Include:
+- owner_name: who this phone belongs to
+- phone_number: their phone number
+- messages: a list of text messages, each with:
+  - timestamp: date and time (e.g. "2024-03-15 14:32")
+  - direction: "incoming" or "outgoing"
+  - other_party: name or phone number of the other person
+  - text: the actual message content
+Make the timestamps realistic and consistent with the case timeline. Include messages \
+that are relevant to the investigation mixed with mundane everyday texts. Messages should \
+feel natural and casual, like real text conversations.""",
+        "email": """\
+Generate a realistic email message. Include:
+- from_address: sender's email
+- to_address: recipient's email
+- cc: CC field (empty string if none)
+- subject: email subject line
+- date: when it was sent
+- body_text: the email body
+- text_typst: Typst-formatted version of body (two newlines for paragraphs, *bold*, _italic_)
+- text_html: HTML-formatted version of body
+Make it feel like a real email with appropriate tone for the sender.""",
     }
+
+    # Build personnel context
+    personnel_info = ""
+    if case.personnel:
+        p = case.personnel
+        personnel_info = f"""
+CASE PERSONNEL (use these EXACT names for consistency across all evidence):
+- Lead detective: {p.lead_detective}
+- Interrogating detective: {p.interrogating_detective} (use as the "interviewer" in ALL interrogations)
+- Coroner / Medical examiner: {p.coroner}"""
+        if p.forensic_technician:
+            personnel_info += f"\n- Forensic technician: {p.forensic_technician}"
+        personnel_info += "\n"
 
     content = f"""\
 Generate the full content for this evidence item.
@@ -250,7 +372,7 @@ EVIDENCE PLAN:
 - Clue it reveals: {plan_item.clue_reveals}
 - Introduced in episode: {plan_item.introduced_in_episode}
 - Also used in episodes: {plan_item.also_used_in_episodes}
-{suspect_info}
+{suspect_info}{personnel_info}
 CASE TRUTH (for consistency — the content must NOT contradict these facts):
 - Victim: {truth.victim.name}, died at crime scene: {truth.crime_scene}
 - Cause of death: {truth.victim.cause_of_death}
@@ -260,6 +382,20 @@ CASE TRUTH (for consistency — the content must NOT contradict these facts):
 
 SPECIFIC INSTRUCTIONS FOR THIS TYPE:
 {type_instructions.get(plan_item.type, "Generate appropriate content.")}
+
+EVIDENCE ANONYMIZATION (CRITICAL):
+- Do NOT put suspect names in document titles, headers, or metadata fields of \
+phone logs, SMS logs, emails, raw_text documents, etc.
+- Instead, use identifiers the player must cross-reference: phone numbers (from POI forms), \
+email addresses, license plate numbers, ID numbers, etc.
+- For phone_log/sms_log: use the phone number from the suspect's POI form as owner_name \
+identifier. The "other_party" field should use phone numbers too (not names), unless \
+the contact is saved in the phone (then a first name or nickname is OK).
+- For email: use realistic email addresses, not "suspect_name@example.com".
+- For raw_text: if it's official records (phone records, bank statements, etc.), \
+identify people by ID numbers, phone numbers, or account numbers -- not full names.
+- The goal: the player must connect documents to suspects by cross-referencing details \
+from POI forms. This creates investigative depth.
 
 Generate content in the case language. Make it feel like an authentic document/evidence \
 from a real investigation.\
@@ -296,11 +432,25 @@ def _build_image_type_instructions(case: Case, plan_item: EvidencePlanItem) -> s
 
     if portrait_refs:
         base += (
-            "\n\nIMPORTANT — VISUAL CONSISTENCY: The following suspects appear in this image. "
-            "Use their portrait descriptions to ensure they look the same as in their "
-            "portrait photos:\n"
+            "\n\nIMPORTANT -- VISUAL CONSISTENCY: The following suspects appear in this image. "
+            "Their actual portrait photos will be attached as reference images during generation. "
+            "Use these portrait descriptions to ensure they look the same:\n"
             + "\n".join(portrait_refs)
         )
+
+    # Check if the victim appears in this image
+    if case.truth and case.truth.victim.portrait_prompt:
+        victim = case.truth.victim
+        name_lower = victim.name.lower()
+        if (
+            name_lower in plan_item.brief_description.lower()
+            or name_lower in plan_item.title.lower()
+        ):
+            base += (
+                f"\n\nVICTIM REFERENCE: The victim {victim.name} appears in this image. "
+                f"Their portrait photo will be attached as a reference image. "
+                f"Portrait description: {victim.portrait_prompt}"
+            )
 
     return base
 

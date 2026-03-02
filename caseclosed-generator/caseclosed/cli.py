@@ -155,7 +155,7 @@ def show(
 @app.command()
 def edit(
     case_id: Annotated[str, typer.Argument(help="Case ID to edit")],
-    target: Annotated[str, typer.Argument(help="What to edit: truth, suspect, episode, evidence, evidence-plan")],
+    target: Annotated[str, typer.Argument(help="What to edit: truth, personnel, suspect, episode, evidence, evidence-plan")],
     name_or_id: Annotated[str | None, typer.Argument(help="Suspect name or evidence ID (when applicable)")] = None,
 ) -> None:
     """Edit a specific part of a case using LLM assistance."""
@@ -163,6 +163,8 @@ def edit(
 
     if target == "truth":
         _edit_truth(case)
+    elif target == "personnel":
+        _edit_personnel(case)
     elif target == "suspect":
         if not name_or_id:
             console.print("[red]Please specify a suspect name.[/red]")
@@ -182,7 +184,7 @@ def edit(
         _edit_evidence_plan(case)
     else:
         console.print(f"[red]Unknown target: {target}[/red]")
-        console.print("Valid targets: truth, suspect, episode, evidence, evidence-plan")
+        console.print("Valid targets: truth, personnel, suspect, episode, evidence, evidence-plan")
         raise typer.Exit(code=1)
 
 
@@ -212,6 +214,34 @@ def _edit_truth(case: Case) -> None:
     save_case(case)
     _display_truth(case)
     _suggest_reconciliation(case, "truth")
+
+
+def _edit_personnel(case: Case) -> None:
+    if case.personnel:
+        from caseclosed.generation.pipeline import _display_truth
+        _display_truth(case)
+
+    instructions = console.input("[bold yellow]Edit instructions:[/bold yellow] ").strip()
+    if not instructions:
+        console.print("[dim]No instructions provided, skipping.[/dim]")
+        return
+
+    from caseclosed.llm.client import generate_structured
+    from caseclosed.models.case import CasePersonnel
+
+    messages = [
+        {"role": "system", "content": f"You are editing case personnel names. Generate in {case.language}."},
+        {"role": "user", "content": (
+            f"Current personnel:\n{case.personnel.model_dump_json(indent=2) if case.personnel else 'None'}\n\n"
+            f"Edit instructions: {instructions}\n\n"
+            "Generate the updated personnel."
+        )},
+    ]
+    case.personnel = generate_structured(CasePersonnel, messages)
+    save_case(case)
+    from caseclosed.generation.pipeline import _display_truth
+    _display_truth(case)
+    console.print("[green]\u2713 Personnel updated.[/green]")
 
 
 def _edit_suspect(case: Case, name: str) -> None:
@@ -370,7 +400,7 @@ def _suggest_reconciliation(case: Case, edited_target: str) -> None:
 # --- Redo Command ---
 
 _REDO_TARGETS = [
-    "truth", "suspects", "portraits", "portrait",
+    "truth", "personnel", "suspects", "portraits", "portrait",
     "episodes", "evidence-plan", "evidence", "image", "images",
 ]
 
@@ -378,7 +408,7 @@ _REDO_TARGETS = [
 @app.command()
 def redo(
     case_id: Annotated[str, typer.Argument(help="Case ID")],
-    target: Annotated[str, typer.Argument(help="What to redo: truth, suspects, portraits, portrait, episodes, evidence-plan, evidence, image, images")],
+    target: Annotated[str, typer.Argument(help="What to redo: truth, personnel, suspects, portraits, portrait, episodes, evidence-plan, evidence, image, images")],
     name_or_id: Annotated[str | None, typer.Argument(help="Suspect name (for portrait) or evidence ID (for evidence/image)")] = None,
 ) -> None:
     """Regenerate a specific part of a case from scratch."""
@@ -391,6 +421,8 @@ def redo(
 
     if target == "truth":
         _redo_truth(case)
+    elif target == "personnel":
+        _redo_personnel(case)
     elif target == "suspects":
         _redo_suspects(case)
     elif target == "portraits":
@@ -432,6 +464,17 @@ def _redo_truth(case: Case) -> None:
     _display_truth(case)
     console.print("[green]✓ Truth regenerated.[/green]")
     _suggest_reconciliation(case, "truth")
+
+
+def _redo_personnel(case: Case) -> None:
+    from caseclosed.generation.truth import generate_personnel
+    from caseclosed.generation.pipeline import _display_truth
+
+    console.print("[bold blue]Regenerating case personnel...[/bold blue]")
+    case.personnel = generate_personnel(case)
+    save_case(case)
+    _display_truth(case)
+    console.print("[green]\u2713 Personnel regenerated.[/green]")
 
 
 def _redo_suspects(case: Case) -> None:

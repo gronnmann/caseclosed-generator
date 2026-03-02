@@ -39,6 +39,8 @@ class Victim(BaseModel):
     occupation: str
     cause_of_death: str
     description: str | None = None
+    portrait_prompt: str | None = None
+    portrait_filename: str | None = None
 
 
 class CaseTruth(BaseModel):
@@ -52,6 +54,15 @@ class CaseTruth(BaseModel):
     timeline: list[TimelineEvent] = []
     crime_scene: str  # Location description
     key_evidence_summary: str | None = None  # Brief note on what proves the killer
+
+
+class CasePersonnel(BaseModel):
+    """Recurring named characters that stay consistent across all evidence."""
+
+    lead_detective: str  # Oversees the case, writes intro/solution letters
+    interrogating_detective: str  # Conducts all interrogations
+    coroner: str  # Medical examiner who writes autopsy/lab reports
+    forensic_technician: str = ""  # Crime scene technician (optional)
 
 
 class CaseMetadata(BaseModel):
@@ -77,6 +88,7 @@ class Case(BaseModel):
 
     # Populated during generation (in order)
     truth: CaseTruth | None = None
+    personnel: CasePersonnel | None = None
     suspects: list[Suspect] = []
     episodes: list[Episode] = []
     evidence_plan: list[EvidencePlanItem] = []

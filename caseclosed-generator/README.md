@@ -103,7 +103,7 @@ cases/
 - **Person of Interest Form** — Structured suspect details with portrait photo
 - **Letter** — Introduction, solution, or narrative letters
 - **Image** — AI-generated crime scene photos, physical evidence, etc.
-- **Raw Text** — Newspaper articles, lab reports, autopsy reports, phone messages, notes
+- **Raw Text** — Newspaper articles, lab reports, autopsy reports, phone messages, notes. Will be later created manually, or compiled through typst, latex or HTML.
 
 ## Development
 

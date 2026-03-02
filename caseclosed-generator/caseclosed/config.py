@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     openrouter_api_key: str
     default_model: str = "google/gemini-2.5-flash"
     default_image_model: str = "google/gemini-2.0-flash-exp:free"
+    image_model_modalities: list[str] = ["image", "text"]
     language: str = "en"
     cases_dir: Path = Path("./cases")
 

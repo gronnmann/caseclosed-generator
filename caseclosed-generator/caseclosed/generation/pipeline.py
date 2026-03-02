@@ -15,18 +15,21 @@ from caseclosed.generation.evidence import (
 )
 from caseclosed.generation.evidence_plan import generate_evidence_plan
 from caseclosed.generation.suspects import generate_suspects
-from caseclosed.generation.truth import generate_truth
+from caseclosed.generation.truth import generate_personnel, generate_truth
 from caseclosed.models.case import Case, GenerationPhase
 from caseclosed.models.evidence import (
     EvidenceItem,
+    Email,
     ImageEvidence,
     InterrogationReport,
     Letter,
     PersonOfInterestForm,
+    PhoneLog,
     RawText,
+    SmsLog,
 )
 from caseclosed.models.suspect import Suspect
-from caseclosed.persistence import save_case
+from caseclosed.persistence import images_dir, save_case
 
 console = Console()
 
@@ -34,18 +37,56 @@ console = Console()
 def _confirm_or_edit(prompt_text: str = "Accept? (y/n/instructions for edit)") -> tuple[str, str | None]:
     """Ask the user to accept, regenerate, or provide edit instructions.
 
+    Special commands (handled in-place, then re-prompts):
+        model <name>       — change the text generation model
+        image-model <name> — change the image generation model
+
     Returns:
         ("accept", None) — proceed
         ("regenerate", None) — regenerate from scratch
         ("edit", <instructions>) — regenerate with specific instructions
     """
-    console.print()
-    response = console.input(f"[bold yellow]{prompt_text}:[/bold yellow] ").strip()
-    if response.lower() in ("y", "yes", ""):
-        return ("accept", None)
-    if response.lower() in ("n", "no", "regenerate"):
-        return ("regenerate", None)
-    return ("edit", response)
+    from caseclosed.config import settings
+
+    while True:
+        console.print()
+        console.print(
+            f"  [dim]model {settings.default_model} | "
+            f"image-model {settings.default_image_model} | "
+            f"image-modality {','.join(settings.image_model_modalities)}[/dim]"
+        )
+        response = console.input(f"[bold yellow]{prompt_text}:[/bold yellow] ").strip()
+
+        # Model change commands
+        if response.lower().startswith("model "):
+            new_model = response[6:].strip()
+            if new_model:
+                settings.default_model = new_model
+                console.print(f"  [green]Text model changed to:[/green] {new_model}")
+            continue
+        if response.lower().startswith("image-model "):
+            new_model = response[12:].strip()
+            if new_model:
+                settings.default_image_model = new_model
+                console.print(f"  [green]Image model changed to:[/green] {new_model}")
+            continue
+        if response.lower().startswith("image-modality "):
+            raw = response[15:].strip().lower()
+            if raw in ("image", "image,text", "image+text"):
+                if raw == "image":
+                    settings.image_model_modalities = ["image"]
+                else:
+                    settings.image_model_modalities = ["image", "text"]
+                console.print(f"  [green]Image modalities changed to:[/green] {settings.image_model_modalities}")
+            else:
+                console.print("  [red]Use: image-modality image  OR  image-modality image,text[/red]")
+            continue
+
+        if response.lower() in ("y", "yes", ""):
+            return ("accept", None)
+        if response.lower() in ("n", "no", "regenerate"):
+            return ("regenerate", None)
+        return ("edit", response)
 
 
 def _display_truth(case: Case) -> None:
@@ -71,6 +112,19 @@ def _display_truth(case: Case) -> None:
         table.add_row("Key Evidence", t.key_evidence_summary)
     console.print(table)
 
+    # Display personnel if set
+    if case.personnel:
+        p = case.personnel
+        ptable = Table(title="Case Personnel", show_lines=True)
+        ptable.add_column("Role", style="cyan")
+        ptable.add_column("Name", style="white")
+        ptable.add_row("Lead Detective", p.lead_detective)
+        ptable.add_row("Interrogating Detective", p.interrogating_detective)
+        ptable.add_row("Coroner", p.coroner)
+        if p.forensic_technician:
+            ptable.add_row("Forensic Technician", p.forensic_technician)
+        console.print(ptable)
+
 
 def _display_suspects(case: Case) -> None:
     for s in case.suspects:
@@ -89,10 +143,17 @@ def _display_suspects(case: Case) -> None:
 
 def _display_episodes(case: Case) -> None:
     for ep in case.episodes:
+        hints_str = ""
+        if ep.hints:
+            hints_str = "\n[bold]Hints:[/bold]\n" + "\n".join(f"  {i}. {h}" for i, h in enumerate(ep.hints, 1))
+        solution_str = ""
+        if ep.previous_episode_solution:
+            solution_str = f"\n[bold]Previous ep solution:[/bold] {ep.previous_episode_solution}"
         console.print(Panel(
             f"[bold]Objective:[/bold] {ep.objective}\n"
-            f"[bold]Intro letter excerpt:[/bold] {ep.intro_letter[:200]}...\n"
-            f"Evidence IDs: {', '.join(ep.evidence_ids) if ep.evidence_ids else 'TBD'}",
+            f"[bold]Intro letter:[/bold] {ep.intro_letter}\n"
+            f"Evidence IDs: {', '.join(ep.evidence_ids) if ep.evidence_ids else 'TBD'}"
+            f"{hints_str}{solution_str}",
             title=f"Episode {ep.number}: {ep.title}",
         ))
 
@@ -116,7 +177,7 @@ def _display_evidence_plan(case: Case) -> None:
             item.title,
             str(item.introduced_in_episode),
             also,
-            item.clue_reveals[:60] + "..." if len(item.clue_reveals) > 60 else item.clue_reveals,
+            item.clue_reveals,
         )
     console.print(table)
 
@@ -124,10 +185,7 @@ def _display_evidence_plan(case: Case) -> None:
 def _display_evidence_item(evidence: EvidenceItem) -> None:
     """Display a single generated evidence item."""
     if isinstance(evidence, InterrogationReport):
-        lines = "\n".join(f"  [cyan]{d.speaker}:[/cyan] {d.text}" for d in evidence.transcript[:8])
-        remaining = len(evidence.transcript) - 8
-        if remaining > 0:
-            lines += f"\n  [dim]... +{remaining} more lines[/dim]"
+        lines = "\n".join(f"  [cyan]{d.speaker}:[/cyan] {d.text}" for d in evidence.transcript)
         console.print(Panel(
             f"Suspect: {evidence.suspect_name}\n"
             f"Case #: {evidence.case_number} | Date: {evidence.date}\n"
@@ -146,29 +204,51 @@ def _display_evidence_item(evidence: EvidenceItem) -> None:
             title=f"[magenta]POI Form:[/magenta] {evidence.plan_id}",
         ))
     elif isinstance(evidence, Letter):
-        body_preview = evidence.body_text[:300]
-        if len(evidence.body_text) > 300:
-            body_preview += "..."
         console.print(Panel(
-            f"From: {evidence.sender} → To: {evidence.recipient}\n"
+            f"From: {evidence.sender} \u2192 To: {evidence.recipient}\n"
             f"Date: {evidence.date or 'N/A'} | Type: {evidence.letter_type}\n\n"
-            f"{body_preview}",
+            f"{evidence.body_text}",
             title=f"[magenta]Letter:[/magenta] {evidence.plan_id}",
         ))
     elif isinstance(evidence, ImageEvidence):
         console.print(Panel(
             f"Caption: {evidence.caption}\n"
             f"Location: {evidence.location_context or 'N/A'}\n\n"
-            f"[dim]Prompt: {evidence.image_prompt[:200]}...[/dim]",
+            f"[dim]Prompt: {evidence.image_prompt}[/dim]",
             title=f"[magenta]Image:[/magenta] {evidence.plan_id}",
         ))
     elif isinstance(evidence, RawText):
-        content_preview = evidence.content[:300]
-        if len(evidence.content) > 300:
-            content_preview += "..."
         console.print(Panel(
-            f"Format: {evidence.format_hint}\n\n{content_preview}",
+            f"Format: {evidence.format_hint}\n\n{evidence.content}",
             title=f"[magenta]Text:[/magenta] {evidence.plan_id}",
+        ))
+    elif isinstance(evidence, PhoneLog):
+        lines = "\n".join(
+            f"  {e.timestamp} | {e.direction:>8} | {e.other_party} | {e.duration or '-'}"
+            for e in evidence.entries
+        )
+        console.print(Panel(
+            f"Owner: {evidence.owner_name} ({evidence.phone_number})\n\n{lines}",
+            title=f"[magenta]Phone Log:[/magenta] {evidence.plan_id}",
+        ))
+    elif isinstance(evidence, SmsLog):
+        lines = "\n".join(
+            f"  {m.timestamp} | {m.direction:>8} | {m.other_party}\n    {m.text}"
+            for m in evidence.messages
+        )
+        console.print(Panel(
+            f"Owner: {evidence.owner_name} ({evidence.phone_number})\n\n{lines}",
+            title=f"[magenta]SMS Log:[/magenta] {evidence.plan_id}",
+        ))
+    elif isinstance(evidence, Email):
+        console.print(Panel(
+            f"From: {evidence.from_address}\n"
+            f"To: {evidence.to_address}\n"
+            + (f"CC: {evidence.cc}\n" if evidence.cc else "")
+            + f"Subject: {evidence.subject}\n"
+            f"Date: {evidence.date}\n\n"
+            f"{evidence.body_text}",
+            title=f"[magenta]Email:[/magenta] {evidence.plan_id}",
         ))
 
 
@@ -177,14 +257,20 @@ def _display_evidence_item(evidence: EvidenceItem) -> None:
 
 def _step_truth(case: Case, suspect_count: int | None, episode_count: int | None, difficulty: str | None) -> None:
     """Generate or regenerate the case truth."""
+    edit_instructions: str | None = None
     while True:
-        console.print("\n[bold blue]Generating case truth...[/bold blue]")
+        if edit_instructions:
+            console.print("\n[bold blue]Editing case truth...[/bold blue]")
+        else:
+            console.print("\n[bold blue]Generating case truth...[/bold blue]")
         case.truth = generate_truth(
             premise=case.premise,
             language=case.language,
             suspect_count=suspect_count,
             episode_count=episode_count,
             difficulty=difficulty,
+            edit_instructions=edit_instructions,
+            current_truth=case.truth if edit_instructions else None,
         )
         if case.truth.victim.name and case.title is None:
             case.title = f"The {case.truth.victim.name} Case"
@@ -193,18 +279,33 @@ def _step_truth(case: Case, suspect_count: int | None, episode_count: int | None
 
         action, instructions = _confirm_or_edit()
         if action == "accept":
+            # Auto-generate case personnel for consistency
+            if not case.personnel:
+                console.print("\n[bold blue]Generating case personnel...[/bold blue]")
+                case.personnel = generate_personnel(case)
+                _display_truth(case)  # re-display to show personnel
             case.generation_state.phase = GenerationPhase.SUSPECTS
             case.generation_state.current_step_detail = None
             save_case(case)
             return
-        # For both "regenerate" and "edit", we loop again
-        # (edit instructions would be used in a future refinement)
+        elif action == "edit":
+            edit_instructions = instructions
+        else:
+            edit_instructions = None
 
 
 def _step_suspects(case: Case) -> None:
+    edit_instructions: str | None = None
     while True:
-        console.print("\n[bold blue]Generating suspects...[/bold blue]")
-        case.suspects = generate_suspects(case)
+        if edit_instructions:
+            console.print("\n[bold blue]Editing suspects...[/bold blue]")
+        else:
+            console.print("\n[bold blue]Generating suspects...[/bold blue]")
+        case.suspects = generate_suspects(
+            case,
+            edit_instructions=edit_instructions,
+            current_suspects=case.suspects if edit_instructions else None,
+        )
         _display_suspects(case)
 
         action, instructions = _confirm_or_edit()
@@ -213,6 +314,10 @@ def _step_suspects(case: Case) -> None:
             case.generation_state.current_step_detail = None
             save_case(case)
             return
+        elif action == "edit":
+            edit_instructions = instructions
+        else:
+            edit_instructions = None
 
 
 def _portrait_exists(case: Case, suspect: Suspect) -> bool:
@@ -224,11 +329,39 @@ def _portrait_exists(case: Case, suspect: Suspect) -> bool:
 
 
 def _step_suspect_portraits(case: Case) -> None:
-    """Generate portrait images for each suspect (resumable)."""
-    from caseclosed.generation.suspects import generate_suspect_portrait_prompt
+    """Generate portrait images for each suspect and the victim (resumable)."""
+    from caseclosed.generation.suspects import generate_suspect_portrait_prompt, generate_victim_portrait_prompt
     from caseclosed.llm.client import generate_image
     from caseclosed.persistence import save_image
 
+    # --- Victim portrait ---
+    assert case.truth is not None
+    victim = case.truth.victim
+    victim_exists = (
+        victim.portrait_filename
+        and (images_dir(case.id) / victim.portrait_filename).exists()
+    )
+    if not victim_exists:
+        console.print(f"\n[bold blue]Generating victim portrait: {victim.name}[/bold blue]")
+        if not victim.portrait_prompt:
+            victim.portrait_prompt = generate_victim_portrait_prompt(
+                victim.name, victim.age, victim.occupation, victim.description, case.language
+            )
+            save_case(case)
+
+        try:
+            image_data = generate_image(victim.portrait_prompt, aspect_ratio="1:1")
+            filename = f"portrait-victim-{victim.name.lower().replace(' ', '-')}.png"
+            save_image(case.id, filename, image_data)
+            victim.portrait_filename = filename
+            console.print(f"  [green]\u2713[/green] Saved: {filename}")
+        except Exception as e:
+            console.print(f"  [red]\u2717 Victim portrait generation failed: {e}[/red]")
+        save_case(case)
+    else:
+        console.print(f"[dim]Victim portrait already generated: {victim.portrait_filename}[/dim]")
+
+    # --- Suspect portraits ---
     remaining = [s for s in case.suspects if not _portrait_exists(case, s)]
     total = len(case.suspects)
     done = total - len(remaining)
@@ -264,9 +397,17 @@ def _step_suspect_portraits(case: Case) -> None:
 
 
 def _step_episodes(case: Case) -> None:
+    edit_instructions: str | None = None
     while True:
-        console.print("\n[bold blue]Generating episodes...[/bold blue]")
-        case.episodes = generate_episodes(case)
+        if edit_instructions:
+            console.print("\n[bold blue]Editing episodes...[/bold blue]")
+        else:
+            console.print("\n[bold blue]Generating episodes...[/bold blue]")
+        case.episodes = generate_episodes(
+            case,
+            edit_instructions=edit_instructions,
+            current_episodes=case.episodes if edit_instructions else None,
+        )
         _display_episodes(case)
 
         action, instructions = _confirm_or_edit()
@@ -275,12 +416,24 @@ def _step_episodes(case: Case) -> None:
             case.generation_state.current_step_detail = None
             save_case(case)
             return
+        elif action == "edit":
+            edit_instructions = instructions
+        else:
+            edit_instructions = None
 
 
 def _step_evidence_plan(case: Case) -> None:
+    edit_instructions: str | None = None
     while True:
-        console.print("\n[bold blue]Planning evidence graph...[/bold blue]")
-        case.evidence_plan = generate_evidence_plan(case)
+        if edit_instructions:
+            console.print("\n[bold blue]Editing evidence plan...[/bold blue]")
+        else:
+            console.print("\n[bold blue]Planning evidence graph...[/bold blue]")
+        case.evidence_plan = generate_evidence_plan(
+            case,
+            edit_instructions=edit_instructions,
+            current_plan=case.evidence_plan if edit_instructions else None,
+        )
 
         # Wire evidence IDs into episodes
         for ep in case.episodes:
@@ -298,6 +451,64 @@ def _step_evidence_plan(case: Case) -> None:
             case.generation_state.current_step_detail = None
             save_case(case)
             return
+        elif action == "edit":
+            edit_instructions = instructions
+        else:
+            edit_instructions = None
+
+
+def _edit_image_prompt(current_prompt: str, edit_instructions: str) -> str:
+    """Refine an image prompt via LLM based on edit instructions."""
+    from caseclosed.llm.client import generate_text
+
+    messages = [
+        {"role": "system", "content": "You are an expert at writing detailed image generation prompts. Edit the given prompt according to the user's instructions. Return ONLY the revised prompt text, nothing else."},
+        {"role": "user", "content": f"Current image prompt:\n\n{current_prompt}\n\nEdit instructions: {edit_instructions}"},
+    ]
+    return generate_text(messages)
+
+
+def _generate_image_inline(case: Case, evidence: ImageEvidence) -> None:
+    """Generate the actual image for an ImageEvidence item right after content approval.
+
+    Shows the prompt for approval/editing, generates, then confirms.
+    """
+    while True:
+        console.print(Panel(
+            f"[bold]Prompt:[/bold]\n{evidence.image_prompt}",
+            title=f"Image prompt: {evidence.plan_id}",
+        ))
+
+        action, instructions = _confirm_or_edit("Approve image prompt? (y/n/edit instructions)")
+        if action == "edit" and instructions:
+            console.print("  [bold blue]Editing prompt...[/bold blue]")
+            evidence.image_prompt = _edit_image_prompt(evidence.image_prompt, instructions)
+            console.print("[dim]Prompt updated. Showing again...[/dim]")
+            continue
+        if action == "regenerate":
+            console.print("[dim]Skipping image generation for now.[/dim]")
+            return
+
+        console.print("  [bold blue]Generating image...[/bold blue]")
+        try:
+            filename = generate_evidence_image(case, evidence)
+            evidence.image_filename = filename
+            console.print(f"  [green]\u2713[/green] Saved: {filename}")
+        except Exception as e:
+            console.print(f"  [red]\u2717 Image generation failed: {e}[/red]")
+            retry_action, _ = _confirm_or_edit("Retry? (y to retry / n to skip)")
+            if retry_action == "accept":
+                continue
+            return
+
+        img_action, _ = _confirm_or_edit("Accept generated image? (y/n to regenerate)")
+        if img_action == "accept":
+            save_case(case)
+            console.print(f"  [green]\u2713[/green] Image accepted: {evidence.plan_id}")
+            return
+        else:
+            evidence.image_filename = None
+            console.print("[dim]Regenerating...[/dim]")
 
 
 def _step_evidence_content(case: Case) -> None:
@@ -312,12 +523,19 @@ def _step_evidence_content(case: Case) -> None:
     done = total - len(remaining)
 
     for i, plan_item in enumerate(remaining, start=done + 1):
+        edit_instructions: str | None = None
+        current_evidence: EvidenceItem | None = None
         while True:
-            console.print(f"\n[bold blue]Generating evidence [{i}/{total}]: {plan_item.title}[/bold blue]")
+            if edit_instructions:
+                console.print(f"\n[bold blue]Editing evidence [{i}/{total}]: {plan_item.title}[/bold blue]")
+            else:
+                console.print(f"\n[bold blue]Generating evidence [{i}/{total}]: {plan_item.title}[/bold blue]")
             case.generation_state.current_step_detail = f"evidence:{i}/{total}"
 
             evidence = generate_evidence_content(
-                case, plan_item, already_generated_ids
+                case, plan_item, already_generated_ids,
+                edit_instructions=edit_instructions,
+                current_evidence=current_evidence if edit_instructions else None,
             )
             _display_evidence_item(evidence)
 
@@ -327,8 +545,18 @@ def _step_evidence_content(case: Case) -> None:
                 already_generated_ids.append(plan_item.id)
                 save_case(case)
                 console.print(f"  [green]✓[/green] Accepted: {plan_item.title} ({plan_item.type})")
+
+                # For image evidence, generate the actual image immediately
+                if isinstance(evidence, ImageEvidence):
+                    _generate_image_inline(case, evidence)
+
                 break
-            # "regenerate" or "edit" → loop again
+            elif action == "edit":
+                edit_instructions = instructions
+                current_evidence = evidence
+            else:
+                edit_instructions = None
+                current_evidence = None
 
     case.generation_state.phase = GenerationPhase.IMAGES
     case.generation_state.current_step_detail = None
@@ -337,7 +565,7 @@ def _step_evidence_content(case: Case) -> None:
 
 
 def _step_images(case: Case) -> None:
-    """Generate images for ImageEvidence items (resumable)."""
+    """Generate images for ImageEvidence items (resumable, with approval)."""
     image_items = [
         e for e in case.evidence
         if isinstance(e, ImageEvidence) and e.image_filename is None
@@ -353,16 +581,51 @@ def _step_images(case: Case) -> None:
     done = total - len(image_items)
 
     for i, img_evidence in enumerate(image_items, start=done + 1):
-        console.print(f"\n[bold blue]Generating image [{i}/{total}]: {img_evidence.caption}[/bold blue]")
-        case.generation_state.current_step_detail = f"image:{i}/{total}"
+        while True:
+            console.print(f"\n[bold blue]Image [{i}/{total}]: {img_evidence.caption}[/bold blue]")
+            console.print(Panel(
+                f"[bold]Caption:[/bold] {img_evidence.caption}\n"
+                f"[bold]Location:[/bold] {img_evidence.location_context or 'N/A'}\n\n"
+                f"[bold]Prompt:[/bold]\n{img_evidence.image_prompt}",
+                title=f"Image prompt: {img_evidence.plan_id}",
+            ))
 
-        try:
-            filename = generate_evidence_image(case, img_evidence)
-            img_evidence.image_filename = filename
-            console.print(f"  [green]✓[/green] Saved: {filename}")
-        except Exception as e:
-            console.print(f"  [red]✗ Image generation failed: {e}[/red]")
-            console.print("  [dim]Skipping — you can regenerate later with 'edit'[/dim]")
+            case.generation_state.current_step_detail = f"image:{i}/{total}"
+
+            action, instructions = _confirm_or_edit("Approve prompt? (y/n/edit instructions)")
+            if action == "edit" and instructions:
+                console.print("  [bold blue]Editing prompt...[/bold blue]")
+                img_evidence.image_prompt = _edit_image_prompt(img_evidence.image_prompt, instructions)
+                console.print("[dim]Prompt updated. Showing again...[/dim]")
+                continue
+            if action == "regenerate":
+                console.print("[dim]Skipping this image.[/dim]")
+                break
+
+            # Generate the actual image
+            console.print("  [bold blue]Generating image...[/bold blue]")
+            try:
+                filename = generate_evidence_image(case, img_evidence)
+                img_evidence.image_filename = filename
+                console.print(f"  [green]\u2713[/green] Saved: {filename}")
+            except Exception as e:
+                console.print(f"  [red]\u2717 Image generation failed: {e}[/red]")
+                console.print("  [dim]You can retry or skip.[/dim]")
+                retry_action, _ = _confirm_or_edit("Retry? (y to retry / n to skip)")
+                if retry_action == "accept":
+                    continue
+                break
+
+            # Ask if the generated image is acceptable
+            img_action, _ = _confirm_or_edit("Accept generated image? (y/n to regenerate)")
+            if img_action == "accept":
+                save_case(case)
+                console.print(f"  [green]\u2713[/green] Accepted: {img_evidence.plan_id}")
+                break
+            else:
+                # Reset filename so it regenerates
+                img_evidence.image_filename = None
+                console.print("[dim]Regenerating...[/dim]")
 
         save_case(case)
 

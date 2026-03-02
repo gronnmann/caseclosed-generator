@@ -68,6 +68,7 @@ def generate_structured[T: BaseModel](
                 console.print(
                     f"  [red]Attempt {attempt}/{MAX_RETRIES} failed: {e}[/red]"
                 )
+                print(e.with_traceback)
 
     raise last_error  # type: ignore[misc]
 
@@ -113,18 +114,36 @@ def generate_image(
     prompt: str,
     model: str | None = None,
     aspect_ratio: str | None = None,
+    reference_images: list[bytes] | None = None,
 ) -> bytes:
     """Generate an image via OpenRouter's chat completions endpoint.
 
     OpenRouter uses the /chat/completions endpoint with modalities=["image","text"]
     instead of a dedicated /images/generations endpoint.
     Returns raw image bytes. Retries up to MAX_RETRIES times.
+
+    If reference_images is provided, they are included as base64-encoded image_url
+    content blocks alongside the text prompt for visual consistency.
     """
     import base64
 
     import httpx
 
     model = model or settings.default_image_model
+
+    # Build multimodal content if reference images provided
+    if reference_images:
+        content: list[dict] = []
+        for ref_bytes in reference_images:
+            b64 = base64.b64encode(ref_bytes).decode("ascii")
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}"},
+            })
+        content.append({"type": "text", "text": prompt})
+        messages = [{"role": "user", "content": content}]
+    else:
+        messages = [{"role": "user", "content": prompt}]
 
     last_error: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 1):
@@ -138,8 +157,8 @@ def generate_image(
                 },
                 json={
                     "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "modalities": ["image", "text"],
+                    "messages": messages,
+                    "modalities": settings.image_model_modalities,
                     **({
                         "image_config": {"aspect_ratio": aspect_ratio}
                     } if aspect_ratio else {}),
