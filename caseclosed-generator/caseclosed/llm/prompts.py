@@ -18,7 +18,13 @@ of deception, red herrings, and conflicting alibis are built on top. Every piece
 evidence must be internally consistent with the established timeline and facts.
 
 IMPORTANT: Generate ALL content in {language}. Every name, dialogue, document, and \
-description must be in {language}.\
+description must be in {language}.
+
+FORMATTING RULES:
+- NEVER use em dashes (\u2014), en dashes (\u2013), or other special Unicode dashes. \
+Use commas (if possible) or ewrite the sentence instead.
+- NEVER use curly/smart quotes (\u201c \u201d \u2018 \u2019). Use straight quotes (" ') only.
+- Avoid other fancy Unicode characters. Stick to basic ASCII punctuation.\
 """
 
 

@@ -53,36 +53,36 @@ class PersonOfInterestForm(BaseModel):
 
     # Personal info
     name: str
-    middle_name: str | None = None
+    middle_name: str = ""
     last_name: str
-    nickname: str | None = None
+    nickname: str = ""
     date_of_birth: str
-    country_of_birth: str | None = None
-    nationality: str | None = None
-    id_number: str | None = None
-    occupation: str | None = None
+    country_of_birth: str = ""
+    nationality: str = ""
+    id_number: str = ""
+    occupation: str = ""
 
     # Contact info
-    phone_country_code: str | None = None
-    phone_number: str | None = None
-    street_address: str | None = None
-    city: str | None = None
-    postal_code: str | None = None
-    country: str | None = None
+    phone_country_code: str = ""
+    phone_number: str = ""
+    street_address: str = ""
+    city: str = ""
+    postal_code: str = ""
+    country: str = ""
 
     # Physical description
-    height_cm: int | None = None
-    weight_kg: int | None = None
-    eye_color: str | None = None
-    hair_color: str | None = None
-    shoe_size_eu: str | None = None
+    height_cm: str = ""
+    weight_kg: str = ""
+    eye_color: str = ""
+    hair_color: str = ""
+    shoe_size_eu: str = ""
 
     # Additional
-    vehicle_plates: str | None = None
-    employer: str | None = None
+    vehicle_plates: str = ""
+    employer: str = ""
     prior_arrests: bool = False
     prior_convictions: bool = False
-    signature: str | None = None
+    signature: str = ""
 
 
 class Letter(BaseModel):

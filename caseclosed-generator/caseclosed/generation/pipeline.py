@@ -17,7 +17,14 @@ from caseclosed.generation.evidence_plan import generate_evidence_plan
 from caseclosed.generation.suspects import generate_suspects
 from caseclosed.generation.truth import generate_truth
 from caseclosed.models.case import Case, GenerationPhase
-from caseclosed.models.evidence import ImageEvidence
+from caseclosed.models.evidence import (
+    EvidenceItem,
+    ImageEvidence,
+    InterrogationReport,
+    Letter,
+    PersonOfInterestForm,
+    RawText,
+)
 from caseclosed.models.suspect import Suspect
 from caseclosed.persistence import save_case
 
@@ -112,6 +119,57 @@ def _display_evidence_plan(case: Case) -> None:
             item.clue_reveals[:60] + "..." if len(item.clue_reveals) > 60 else item.clue_reveals,
         )
     console.print(table)
+
+
+def _display_evidence_item(evidence: EvidenceItem) -> None:
+    """Display a single generated evidence item."""
+    if isinstance(evidence, InterrogationReport):
+        lines = "\n".join(f"  [cyan]{d.speaker}:[/cyan] {d.text}" for d in evidence.transcript[:8])
+        remaining = len(evidence.transcript) - 8
+        if remaining > 0:
+            lines += f"\n  [dim]... +{remaining} more lines[/dim]"
+        console.print(Panel(
+            f"Suspect: {evidence.suspect_name}\n"
+            f"Case #: {evidence.case_number} | Date: {evidence.date}\n"
+            f"Interviewer: {evidence.interviewer}\n\n"
+            f"{lines}",
+            title=f"[magenta]Interrogation:[/magenta] {evidence.plan_id}",
+        ))
+    elif isinstance(evidence, PersonOfInterestForm):
+        console.print(Panel(
+            f"{evidence.name} {evidence.last_name}"
+            + (f' "{evidence.nickname}"' if evidence.nickname else "")
+            + f"\nDOB: {evidence.date_of_birth} | Nationality: {evidence.nationality or 'N/A'}\n"
+            f"Occupation: {evidence.occupation or 'N/A'}\n"
+            f"Height: {evidence.height_cm or '?'}cm | Weight: {evidence.weight_kg or '?'}kg\n"
+            f"Eye: {evidence.eye_color or '?'} | Hair: {evidence.hair_color or '?'}",
+            title=f"[magenta]POI Form:[/magenta] {evidence.plan_id}",
+        ))
+    elif isinstance(evidence, Letter):
+        body_preview = evidence.body_text[:300]
+        if len(evidence.body_text) > 300:
+            body_preview += "..."
+        console.print(Panel(
+            f"From: {evidence.sender} → To: {evidence.recipient}\n"
+            f"Date: {evidence.date or 'N/A'} | Type: {evidence.letter_type}\n\n"
+            f"{body_preview}",
+            title=f"[magenta]Letter:[/magenta] {evidence.plan_id}",
+        ))
+    elif isinstance(evidence, ImageEvidence):
+        console.print(Panel(
+            f"Caption: {evidence.caption}\n"
+            f"Location: {evidence.location_context or 'N/A'}\n\n"
+            f"[dim]Prompt: {evidence.image_prompt[:200]}...[/dim]",
+            title=f"[magenta]Image:[/magenta] {evidence.plan_id}",
+        ))
+    elif isinstance(evidence, RawText):
+        content_preview = evidence.content[:300]
+        if len(evidence.content) > 300:
+            content_preview += "..."
+        console.print(Panel(
+            f"Format: {evidence.format_hint}\n\n{content_preview}",
+            title=f"[magenta]Text:[/magenta] {evidence.plan_id}",
+        ))
 
 
 # --- Pipeline Steps ---
@@ -243,7 +301,7 @@ def _step_evidence_plan(case: Case) -> None:
 
 
 def _step_evidence_content(case: Case) -> None:
-    """Generate evidence content one item at a time (resumable)."""
+    """Generate evidence content one item at a time (resumable, with approval)."""
     already_generated_ids = [e.plan_id for e in case.evidence if hasattr(e, "plan_id")]
     remaining = [
         item for item in case.evidence_plan
@@ -254,17 +312,23 @@ def _step_evidence_content(case: Case) -> None:
     done = total - len(remaining)
 
     for i, plan_item in enumerate(remaining, start=done + 1):
-        console.print(f"\n[bold blue]Generating evidence [{i}/{total}]: {plan_item.title}[/bold blue]")
-        case.generation_state.current_step_detail = f"evidence:{i}/{total}"
+        while True:
+            console.print(f"\n[bold blue]Generating evidence [{i}/{total}]: {plan_item.title}[/bold blue]")
+            case.generation_state.current_step_detail = f"evidence:{i}/{total}"
 
-        evidence = generate_evidence_content(
-            case, plan_item, already_generated_ids
-        )
-        case.evidence.append(evidence)
-        already_generated_ids.append(plan_item.id)
-        save_case(case)  # Save after each item for resumability
+            evidence = generate_evidence_content(
+                case, plan_item, already_generated_ids
+            )
+            _display_evidence_item(evidence)
 
-        console.print(f"  [green]✓[/green] Generated: {plan_item.title} ({plan_item.type})")
+            action, instructions = _confirm_or_edit()
+            if action == "accept":
+                case.evidence.append(evidence)
+                already_generated_ids.append(plan_item.id)
+                save_case(case)
+                console.print(f"  [green]✓[/green] Accepted: {plan_item.title} ({plan_item.type})")
+                break
+            # "regenerate" or "edit" → loop again
 
     case.generation_state.phase = GenerationPhase.IMAGES
     case.generation_state.current_step_detail = None
