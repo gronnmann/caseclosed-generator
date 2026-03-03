@@ -21,12 +21,17 @@ from caseclosed.models.case import Case, GenerationPhase
 from caseclosed.models.evidence import (
     EvidenceItem,
     Email,
+    FacebookPost,
+    HandwrittenNote,
     ImageEvidence,
+    InstagramPost,
     InterrogationReport,
+    Invoice,
     Letter,
     PersonOfInterestForm,
     PhoneLog,
     RawText,
+    Receipt,
     SmsLog,
 )
 from caseclosed.models.suspect import Suspect
@@ -250,6 +255,65 @@ def _display_evidence_item(evidence: EvidenceItem) -> None:
             f"Date: {evidence.date}\n\n"
             f"{evidence.body_text}",
             title=f"[magenta]Email:[/magenta] {evidence.plan_id}",
+        ))
+    elif isinstance(evidence, HandwrittenNote):
+        console.print(Panel(
+            f"Author: {evidence.author}\n"
+            f"Context: {evidence.context or 'N/A'}\n\n"
+            f"{evidence.content}",
+            title=f"[magenta]Handwritten Note:[/magenta] {evidence.plan_id}",
+        ))
+    elif isinstance(evidence, InstagramPost):
+        console.print(Panel(
+            f"@{evidence.username} | {evidence.date}\n"
+            f"Likes: {evidence.likes}\n\n"
+            f"{evidence.caption}\n\n"
+            f"[dim]Image prompt: {evidence.image_prompt or 'N/A'}[/dim]",
+            title=f"[magenta]Instagram Post:[/magenta] {evidence.plan_id}",
+        ))
+    elif isinstance(evidence, FacebookPost):
+        comments = "\n".join(f"  {c}" for c in evidence.comments) if evidence.comments else "(no comments)"
+        console.print(Panel(
+            f"{evidence.author_name} | {evidence.date}\n"
+            f"Likes: {evidence.likes}\n\n"
+            f"{evidence.content}\n\n"
+            f"Comments:\n{comments}",
+            title=f"[magenta]Facebook Post:[/magenta] {evidence.plan_id}",
+        ))
+    elif isinstance(evidence, Invoice):
+        items = "\n".join(
+            f"  {it.description} x{it.quantity} @ {it.unit_price} = {it.total}"
+            for it in evidence.items
+        )
+        console.print(Panel(
+            f"Invoice #{evidence.invoice_number} | {evidence.date}\n"
+            f"Seller: {evidence.seller_name}\n"
+            f"Buyer: {evidence.buyer_name}\n\n"
+            f"{items}\n\n"
+            f"Subtotal: {evidence.subtotal}"
+            + (f" | Tax: {evidence.tax}" if evidence.tax else "")
+            + f" | Total: {evidence.total}",
+            title=f"[magenta]Invoice:[/magenta] {evidence.plan_id}",
+        ))
+    elif isinstance(evidence, Receipt):
+        items = "\n".join(
+            f"  {it.description} x{it.quantity} @ {it.price}"
+            for it in evidence.items
+        )
+        console.print(Panel(
+            f"{evidence.store_name} | {evidence.date}\n\n"
+            f"{items}\n\n"
+            f"Subtotal: {evidence.subtotal}"
+            + (f" | Tax: {evidence.tax}" if evidence.tax else "")
+            + f" | Total: {evidence.total}"
+            + (f"\nPayment: {evidence.payment_method}" if evidence.payment_method else ""),
+            title=f"[magenta]Receipt:[/magenta] {evidence.plan_id}",
+        ))
+    else:
+        # Fallback for any unknown type
+        console.print(Panel(
+            str(evidence.model_dump()),
+            title=f"[magenta]Evidence:[/magenta] {getattr(evidence, 'plan_id', '?')}",
         ))
 
 
