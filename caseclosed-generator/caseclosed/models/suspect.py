@@ -1,6 +1,17 @@
 from pydantic import BaseModel
 
 
+HANDWRITING_FONTS = [
+    "Nanum Pen Script",
+    "Just Another Hand",
+    "Caveat",
+    "Gochi Hand",
+    "Neucha",
+    "Shadows Into Light Two",
+    "Homemade Apple",
+]
+
+
 class Suspect(BaseModel):
     """A person of interest in the case."""
 
@@ -14,6 +25,10 @@ class Suspect(BaseModel):
     secrets: list[str] = []
     is_killer: bool = False
     personality_traits: list[str] = []
+    relationships: dict[str, str] = {}  # name -> relationship/tension description
+
+    # Handwriting font (assigned programmatically)
+    handwriting_font: str | None = None
 
     # Portrait image (generated after suspect creation)
     portrait_prompt: str | None = None  # Detailed prompt for AI portrait generation

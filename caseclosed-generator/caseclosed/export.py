@@ -10,16 +10,35 @@ from caseclosed.models.case import Case
 from caseclosed.models.evidence import (
     Email,
     EvidencePlanItem,
+    FacebookPost,
+    HandwrittenNote,
+    InstagramPost,
     InterrogationReport,
+    Invoice,
     Letter,
     PersonOfInterestForm,
     PhoneLog,
     RawText,
+    Receipt,
     SmsLog,
+)
+from caseclosed.pdf_templates import (
+    render_email,
+    render_facebook_post,
+    render_instagram_post,
+    render_invoice,
+    render_phone_log,
+    render_poi_form,
+    render_receipt,
+    render_sms_log,
 )
 from caseclosed.persistence import images_dir
 
 console = Console()
+
+# Path to bundled resources
+_RES_DIR = Path(__file__).resolve().parent.parent / "res"
+_DEFAULT_HANDWRITING = "Caveat"
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +134,28 @@ def _build_pdf(src_folder: Path, src_name: str, content: str, pdf_dest: Path) ->
 
 
 # ---------------------------------------------------------------------------
+# Suspect font lookup & resource helpers
+# ---------------------------------------------------------------------------
+
+
+def _suspect_font(case: Case, name: str) -> str:
+    """Get the handwriting font for a suspect by name."""
+    for s in case.suspects or []:
+        if s.name == name:
+            return s.handwriting_font or _DEFAULT_HANDWRITING
+    return _DEFAULT_HANDWRITING
+
+
+def _copy_res(filename: str, dest_folder: Path) -> bool:
+    """Copy a file from res/ to dest_folder. Returns True if copied."""
+    src = _RES_DIR / filename
+    if src.exists():
+        shutil.copy2(src, dest_folder / filename)
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Main export
 # ---------------------------------------------------------------------------
 
@@ -142,11 +183,27 @@ def export_case(case: Case, evidence_id: str | None = None) -> Path:
         if item.type == "image":
             skip_count += 1
             continue
+        # Skip instagram posts with no image yet
+        if item.type == "instagram_post" and not getattr(item, "image_filename", None):
+            skip_count += 1
+            continue
 
         plan = plan_map.get(item.plan_id)
         ep = plan.introduced_in_episode if plan else 0
         eid = item.plan_id
         folder = _src_dir(out, eid)
+
+        # --- ReportLab direct-PDF path ---
+        rl_ok = _try_reportlab(case, item, plan, folder, out, ep, eid)
+        if rl_ok is not None:
+            tag = "[green]\u2713[/green]" if rl_ok else "[red]\u2717[/red]"
+            pdf_name = f"ep{ep}-{eid}-reportlab.pdf"
+            console.print(f"  {tag} {pdf_name}")
+            if rl_ok:
+                pdf_count += 1
+            continue
+
+        # --- Legacy Typst / LaTeX / HTML path ---
 
         # Copy suspect portrait into source dir for POI forms
         portrait_file: str | None = None
@@ -155,7 +212,15 @@ def export_case(case: Case, evidence_id: str | None = None) -> Path:
             if suspect:
                 portrait_file = _find_portrait(case, suspect, folder)
 
-        formats = _formats_for(item, portrait_file)
+        # Copy instagram image into source dir
+        ig_image: str | None = None
+        if isinstance(item, InstagramPost) and item.image_filename:
+            src = images_dir(case.id) / item.image_filename
+            if src.exists():
+                shutil.copy2(src, folder / item.image_filename)
+                ig_image = item.image_filename
+
+        formats = _formats_for(case, item, portrait_file, ig_image, folder)
 
         for fmt_key, (src_name, content) in formats.items():
             if not content:
@@ -169,62 +234,106 @@ def export_case(case: Case, evidence_id: str | None = None) -> Path:
 
     console.print(f"\n[bold]{pdf_count} PDFs compiled[/bold] \u2192 {out}")
     if skip_count:
-        console.print(f"[dim]({skip_count} image evidence items skipped)[/dim]")
+        console.print(f"[dim]({skip_count} image/instagram items skipped)[/dim]")
     return out
 
 
 # ---------------------------------------------------------------------------
-# Format dispatch
+# ReportLab dispatch
+# ---------------------------------------------------------------------------
+
+
+def _try_reportlab(
+    case: Case,
+    item: object,
+    plan: EvidencePlanItem | None,
+    folder: Path,
+    out: Path,
+    ep: int,
+    eid: str,
+) -> bool | None:
+    """Try to render the item via ReportLab. Returns True/False on success/failure, None if not handled."""
+    pdf_dest = out / f"ep{ep}-{eid}-reportlab.pdf"
+
+    try:
+        match item:
+            case PhoneLog():
+                render_phone_log(item, pdf_dest)
+            case SmsLog():
+                render_sms_log(item, pdf_dest)
+            case Email():
+                render_email(item, pdf_dest)
+            case PersonOfInterestForm():
+                portrait: str | None = None
+                if plan and plan.suspect_name:
+                    suspect = next((s for s in case.suspects if s.name == plan.suspect_name), None)
+                    if suspect:
+                        portrait = _find_portrait(case, suspect, folder)
+                        if portrait:
+                            portrait = str(folder / portrait)
+                render_poi_form(item, pdf_dest, portrait_path=portrait)
+            case FacebookPost():
+                render_facebook_post(item, pdf_dest)
+            case InstagramPost():
+                ig_path: str | None = None
+                if item.image_filename:
+                    src = images_dir(case.id) / item.image_filename
+                    if src.exists():
+                        ig_path = str(src)
+                render_instagram_post(item, pdf_dest, image_path=ig_path)
+            case Invoice():
+                render_invoice(item, pdf_dest)
+            case Receipt():
+                render_receipt(item, pdf_dest)
+            case _:
+                return None  # not handled by ReportLab
+    except Exception as exc:
+        console.print(f"  [red]reportlab error:[/red] {exc!s:.200}")
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Format dispatch (legacy — Typst / LaTeX / HTML)
 # ---------------------------------------------------------------------------
 
 
 def _formats_for(
+    case: Case,
     item: object,
     portrait_file: str | None = None,
+    ig_image: str | None = None,
+    folder: Path | None = None,
 ) -> dict[str, tuple[str, str]]:
-    """Return {format_key: (source_filename, content)} for each output format."""
+    """Return {format_key: (source_filename, content)} for each output format.
+
+    Only handles types NOT covered by ReportLab (InterrogationReport, Letter, HandwrittenNote).
+    """
     match item:
         case InterrogationReport():
             return {
                 "typst": ("doc.typ", _interrogation_typst(item)),
-                "latex": ("doc.tex", _interrogation_latex(item)),
-                "html": ("doc.html", _interrogation_html(item)),
             }
         case Letter():
+            logo = False
+            if folder and item.letter_type in ("intro", "solution"):
+                logo = _copy_res("logo.png", folder)
             return {
-                "typst": ("doc.typ", _letter_typst(item)),
-                "latex": ("doc.tex", _letter_latex(item)),
-                "html": ("doc.html", _letter_html(item)),
+                "typst": ("doc.typ", _letter_typst(item, logo=logo)),
             }
         case RawText():
+            if item.format_hint == "autopsy_report" and folder:
+                _copy_res("obduction_body.png", folder)
             return {
                 "typst": ("doc.typ", item.text_typst or _rawtext_typst(item)),
                 "latex": ("doc.tex", item.text_latex or _rawtext_latex(item)),
                 "html": ("doc.html", item.text_html or _rawtext_html(item)),
             }
-        case Email():
+        case HandwrittenNote():
+            font = _suspect_font(case, item.author)
             return {
-                "typst": ("doc.typ", item.text_typst or _email_typst(item)),
-                "latex": ("doc.tex", _email_latex(item)),
-                "html": ("doc.html", item.text_html or _email_html(item)),
-            }
-        case PersonOfInterestForm():
-            return {
-                "typst": ("doc.typ", _poi_typst(item, portrait_file)),
-                "latex": ("doc.tex", _poi_latex(item, portrait_file)),
-                "html": ("doc.html", _poi_html(item, portrait_file)),
-            }
-        case PhoneLog():
-            return {
-                "typst": ("doc.typ", _phone_typst(item)),
-                "latex": ("doc.tex", _phone_latex(item)),
-                "html": ("doc.html", _phone_html(item)),
-            }
-        case SmsLog():
-            return {
-                "typst": ("doc.typ", _sms_typst(item)),
-                "latex": ("doc.tex", _sms_latex(item)),
-                "html": ("doc.html", _sms_html(item)),
+                "typst": ("doc.typ", _handwritten_typst(item, font)),
+                "html": ("doc.html", _handwritten_html(item, font)),
             }
     return {}
 
@@ -356,14 +465,15 @@ def _interrogation_html(item: InterrogationReport) -> str:
 # ===========================================================================
 
 
-def _letter_typst(item: Letter) -> str:
+def _letter_typst(item: Letter, *, logo: bool = False) -> str:
     body = item.text_typst or item.body_text
+    logo_block = '#image("logo.png", width: 5cm)\n#v(0.5em)\n' if logo else ""
     return f"""\
 #set page(margin: (x: 2.5cm, y: 2.5cm))
 #set text(font: "New Computer Modern", size: 11pt)
 #set par(justify: true)
 
-#align(right)[{item.date or ""}]
+{logo_block}#align(right)[{item.date or ""}]
 #v(0.5em)
 *From:* {item.sender} \\
 *To:* {item.recipient}
@@ -403,7 +513,8 @@ def _letter_latex(item: Letter) -> str:
 \\end{{document}}"""
 
 
-def _letter_html(item: Letter) -> str:
+def _letter_html(item: Letter, *, logo: bool = False) -> str:
+    logo_img = '<div style="margin-bottom: 1em;"><img src="logo.png" style="width: 200px;"></div>\n' if logo else ""
     return f"""\
 <!DOCTYPE html>
 <html lang="en">
@@ -416,7 +527,7 @@ def _letter_html(item: Letter) -> str:
 </style>
 </head>
 <body>
-<p style="text-align: right;">{_html_escape(item.date or "")}</p>
+{logo_img}<p style="text-align: right;">{_html_escape(item.date or "")}</p>
 <div class="meta">
   <p><strong>From:</strong> {_html_escape(item.sender)}</p>
   <p><strong>To:</strong> {_html_escape(item.recipient)}</p>
@@ -560,186 +671,186 @@ def _poi_address(item: PersonOfInterestForm) -> str:
     return ", ".join(filter(None, [item.street_address, item.city, item.postal_code, item.country]))
 
 
-def _poi_typst(item: PersonOfInterestForm, portrait: str | None) -> str:
+def _poi_typst(item: PersonOfInterestForm, portrait: str | None, hw_font: str) -> str:
     full_name = _poi_full_name(item)
-    address = _poi_address(item)
 
-    personal_rows = f"""\
-      [*Full Name*], [{full_name}],
-      [*Nickname*], [{item.nickname or "N/A"}],
-      [*Date of Birth*], [{item.date_of_birth}],
-      [*Nationality*], [{item.nationality or "N/A"}],
-      [*ID Number*], [{item.id_number or "N/A"}],
-      [*Occupation*], [{item.occupation or "N/A"}],"""
-
+    portrait_block = ""
     if portrait:
-        personal_section = f"""\
-#grid(
-  columns: (1fr, 3.5cm),
-  column-gutter: 1em,
-  [
-    #table(
-      columns: (4.5cm, 1fr),
-      stroke: 0.5pt,
-{personal_rows}
-    )
-  ],
-  [#image("{portrait}", width: 100%)],
-)"""
-    else:
-        personal_section = f"""\
-#table(
-  columns: (4.5cm, 1fr),
-  stroke: 0.5pt,
-{personal_rows}
-)"""
+        portrait_block = f"""
+#place(top + right, dx: 0cm, dy: -0.5cm)[
+  #box(stroke: 0.5pt, inset: 2pt)[#image("{portrait}", width: 3cm)]
+]
+"""
 
     return f"""\
 #set page(margin: (x: 2cm, y: 2cm))
-#set text(font: "New Computer Modern", size: 10pt)
+#set text(font: "New Computer Modern", size: 9pt)
 
-#align(center)[
-  #text(size: 14pt, weight: "bold")[PERSON OF INTEREST -- INFORMATION FORM]
-]
+#text(size: 16pt, weight: "bold")[Person of Interest (PoI)]
+{portrait_block}
+#v(0.3em)
 
-#v(0.5em)
-#line(length: 100%)
-#v(0.5em)
-
-#text(size: 11pt, weight: "bold")[PERSONAL DETAILS]
-
-{personal_section}
-
-#v(0.5em)
-#text(size: 11pt, weight: "bold")[CONTACT INFORMATION]
+*Personal Information*
 
 #table(
-  columns: (4.5cm, 1fr),
+  columns: (1fr, 1fr, 1fr),
   stroke: 0.5pt,
-  [*Phone*], [{item.phone_country_code} {item.phone_number}],
-  [*Address*], [{address}],
+  inset: 6pt,
+  [*First Name* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.name}]],
+  [*Middle Name* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.middle_name or ""}]],
+  [*Last Name* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.last_name}]],
+  [*Alias / Maiden Name / Prior Names* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.nickname or "N/A"}]],
+  [*Date of Birth* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.date_of_birth}]],
+  [*Country of Birth* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.country_of_birth or "N/A"}]],
+  [*Nationality* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.nationality or "N/A"}]],
+  [*National Identity Number* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.id_number or "N/A"}]],
+  [*Occupation* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.occupation or "N/A"}]],
 )
 
-#v(0.5em)
-#text(size: 11pt, weight: "bold")[PHYSICAL DESCRIPTION]
+*Contact Information*
 
 #table(
-  columns: (4.5cm, 1fr),
+  columns: (1fr, 2fr),
   stroke: 0.5pt,
-  [*Height (cm)*], [{item.height_cm or "N/A"}],
-  [*Weight (kg)*], [{item.weight_kg or "N/A"}],
-  [*Eye Color*], [{item.eye_color or "N/A"}],
-  [*Hair Color*], [{item.hair_color or "N/A"}],
-  [*Shoe Size (EU)*], [{item.shoe_size_eu or "N/A"}],
+  inset: 6pt,
+  [*Phone Number (Country Code)* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.phone_country_code}]],
+  [*Phone Number* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.phone_number}]],
 )
-
-#v(0.5em)
-#text(size: 11pt, weight: "bold")[ADDITIONAL INFORMATION]
 
 #table(
-  columns: (4.5cm, 1fr),
+  columns: (1fr, 1fr, 0.5fr, 1fr),
   stroke: 0.5pt,
-  [*Vehicle Plates*], [{item.vehicle_plates or "N/A"}],
-  [*Employer*], [{item.employer or "N/A"}],
-  [*Prior Arrests*], [{"Yes" if item.prior_arrests else "No"}],
-  [*Prior Convictions*], [{"Yes" if item.prior_convictions else "No"}],
+  inset: 6pt,
+  [*Home Address* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.street_address}]],
+  [*City* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.city}]],
+  [*Zip Code* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.postal_code}]],
+  [*Country* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.country}]],
 )
 
-#v(1.5em)
-#line(length: 100%)
+*Physical Description*
+
 #table(
   columns: (1fr, 1fr),
-  stroke: none,
-  [*Signature:* _{item.signature or ""}_], [*Date:*],
+  stroke: 0.5pt,
+  inset: 6pt,
+  [*Height (cm)* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.height_cm or "N/A"}]],
+  [*Weight (kg)* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.weight_kg or "N/A"}]],
 )
+
+#table(
+  columns: (1fr, 1fr, 1fr),
+  stroke: 0.5pt,
+  inset: 6pt,
+  [*Eye Color* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.eye_color or "N/A"}]],
+  [*Hair Color* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.hair_color or "N/A"}]],
+  [*Shoe Size (EU/cm)* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.shoe_size_eu or "N/A"}]],
+)
+
+*Additional Information*
+
+#table(
+  columns: (1fr, 1fr),
+  stroke: 0.5pt,
+  inset: 6pt,
+  [*Vehicle Ownership (License plate)* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.vehicle_plates or "N/A"}]],
+  [*Employer name* #linebreak() #text(font: "{hw_font}", size: 13pt)[{item.employer or "N/A"}]],
+  [*Prior arrests (YES/NO)* #linebreak() #text(font: "{hw_font}", size: 13pt)[{"Yes" if item.prior_arrests else "No"}]],
+  [*Criminal record (YES/NO)* #linebreak() #text(font: "{hw_font}", size: 13pt)[{"Yes" if item.prior_convictions else "No"}]],
+)
+
+#v(0.5em)
+#text(size: 8pt)[I hereby confirm that all the information provided in this form is true and accurate to the best of my knowledge. I understand that providing false or misleading information may have legal consequences.]
+
+*Signature*
+
+#text(font: "{hw_font}", size: 16pt)[{item.signature or full_name}]
+
+#line(length: 50%, stroke: (dash: "dashed"))
 """
 
 
 def _poi_latex(item: PersonOfInterestForm, portrait: str | None) -> str:
     full_name = _poi_full_name(item)
-    address = _poi_address(item)
     graphicx = "\\usepackage{graphicx}\n" if portrait else ""
 
-    personal_table = f"""\
-\\begin{{tabular}}{{|l|l|}}
-\\hline
-\\textbf{{Full Name}} & {_latex_escape(full_name)} \\\\\\hline
-\\textbf{{Nickname}} & {_latex_escape(item.nickname or "N/A")} \\\\\\hline
-\\textbf{{Date of Birth}} & {_latex_escape(item.date_of_birth)} \\\\\\hline
-\\textbf{{Nationality}} & {_latex_escape(item.nationality or "N/A")} \\\\\\hline
-\\textbf{{ID Number}} & {_latex_escape(item.id_number or "N/A")} \\\\\\hline
-\\textbf{{Occupation}} & {_latex_escape(item.occupation or "N/A")} \\\\\\hline
-\\end{{tabular}}"""
-
+    portrait_block = ""
     if portrait:
-        personal_section = (
-            f"\\begin{{minipage}}{{0.6\\textwidth}}\n{personal_table}\n\\end{{minipage}}"
-            f"\\hfill\n\\begin{{minipage}}{{0.3\\textwidth}}\n"
-            f"\\includegraphics[width=\\textwidth]{{{portrait}}}\n\\end{{minipage}}"
+        portrait_block = (
+            f"\\begin{{wrapfigure}}{{r}}{{3cm}}\n"
+            f"\\includegraphics[width=3cm]{{{portrait}}}\n"
+            f"\\end{{wrapfigure}}\n"
         )
-    else:
-        personal_section = personal_table
 
     return f"""\
 \\documentclass[11pt]{{article}}
 \\usepackage[margin=1in]{{geometry}}
 \\usepackage{{parskip}}
 \\usepackage{{array}}
+\\usepackage{{wrapfig}}
 {graphicx}\\begin{{document}}
 
-\\begin{{center}}
-\\textbf{{\\Large PERSON OF INTEREST -- INFORMATION FORM}}
-\\end{{center}}
+\\textbf{{\\Large Person of Interest (PoI)}}
 
-\\hrule\\bigskip
-
-\\textbf{{\\large PERSONAL DETAILS}}\\\\[0.5em]
-{personal_section}
-
-\\bigskip
-\\textbf{{\\large CONTACT INFORMATION}}\\\\[0.5em]
-\\begin{{tabular}}{{|l|l|}}
+{portrait_block}
+\\textbf{{Personal Information}}\\\\[0.5em]
+\\begin{{tabular}}{{|p{{4.5cm}}|p{{4.5cm}}|p{{4.5cm}}|}}
 \\hline
-\\textbf{{Phone}} & {_latex_escape(item.phone_country_code)} {_latex_escape(item.phone_number)} \\\\\\hline
-\\textbf{{Address}} & {_latex_escape(address)} \\\\\\hline
+\\textbf{{First Name}} & \\textbf{{Middle Name}} & \\textbf{{Last Name}} \\\\
+{_latex_escape(item.name)} & {_latex_escape(item.middle_name or "")} & {_latex_escape(item.last_name)} \\\\\\hline
+\\textbf{{Alias}} & \\textbf{{Date of Birth}} & \\textbf{{Country of Birth}} \\\\
+{_latex_escape(item.nickname or "N/A")} & {_latex_escape(item.date_of_birth)} & {_latex_escape(item.country_of_birth or "N/A")} \\\\\\hline
+\\textbf{{Nationality}} & \\textbf{{ID Number}} & \\textbf{{Occupation}} \\\\
+{_latex_escape(item.nationality or "N/A")} & {_latex_escape(item.id_number or "N/A")} & {_latex_escape(item.occupation or "N/A")} \\\\\\hline
 \\end{{tabular}}
 
 \\bigskip
-\\textbf{{\\large PHYSICAL DESCRIPTION}}\\\\[0.5em]
-\\begin{{tabular}}{{|l|l|}}
+\\textbf{{Contact Information}}\\\\[0.5em]
+\\begin{{tabular}}{{|p{{4.5cm}}|p{{9cm}}|}}
 \\hline
-\\textbf{{Height (cm)}} & {_latex_escape(item.height_cm or "N/A")} \\\\\\hline
-\\textbf{{Weight (kg)}} & {_latex_escape(item.weight_kg or "N/A")} \\\\\\hline
-\\textbf{{Eye Color}} & {_latex_escape(item.eye_color or "N/A")} \\\\\\hline
-\\textbf{{Hair Color}} & {_latex_escape(item.hair_color or "N/A")} \\\\\\hline
-\\textbf{{Shoe Size (EU)}} & {_latex_escape(item.shoe_size_eu or "N/A")} \\\\\\hline
+\\textbf{{Phone (Country Code)}} & \\textbf{{Phone Number}} \\\\
+{_latex_escape(item.phone_country_code)} & {_latex_escape(item.phone_number)} \\\\\\hline
+\\end{{tabular}}
+
+\\begin{{tabular}}{{|p{{4.5cm}}|p{{3cm}}|p{{1.5cm}}|p{{3cm}}|}}
+\\hline
+\\textbf{{Home Address}} & \\textbf{{City}} & \\textbf{{Zip}} & \\textbf{{Country}} \\\\
+{_latex_escape(item.street_address)} & {_latex_escape(item.city)} & {_latex_escape(item.postal_code)} & {_latex_escape(item.country)} \\\\\\hline
 \\end{{tabular}}
 
 \\bigskip
-\\textbf{{\\large ADDITIONAL INFORMATION}}\\\\[0.5em]
-\\begin{{tabular}}{{|l|l|}}
+\\textbf{{Physical Description}}\\\\[0.5em]
+\\begin{{tabular}}{{|p{{4.5cm}}|p{{4.5cm}}|p{{4.5cm}}|}}
 \\hline
-\\textbf{{Vehicle Plates}} & {_latex_escape(item.vehicle_plates or "N/A")} \\\\\\hline
-\\textbf{{Employer}} & {_latex_escape(item.employer or "N/A")} \\\\\\hline
-\\textbf{{Prior Arrests}} & {"Yes" if item.prior_arrests else "No"} \\\\\\hline
-\\textbf{{Prior Convictions}} & {"Yes" if item.prior_convictions else "No"} \\\\\\hline
+\\textbf{{Height (cm)}} & \\textbf{{Weight (kg)}} & \\textbf{{Shoe Size (EU)}} \\\\
+{_latex_escape(item.height_cm or "N/A")} & {_latex_escape(item.weight_kg or "N/A")} & {_latex_escape(item.shoe_size_eu or "N/A")} \\\\\\hline
+\\textbf{{Eye Color}} & \\textbf{{Hair Color}} & \\\\
+{_latex_escape(item.eye_color or "N/A")} & {_latex_escape(item.hair_color or "N/A")} & \\\\\\hline
 \\end{{tabular}}
 
-\\bigskip\\hrule\\medskip
-\\textbf{{Signature:}} \\textit{{{_latex_escape(item.signature or "")}}} \\hfill \\textbf{{Date:}}
+\\bigskip
+\\textbf{{Additional Information}}\\\\[0.5em]
+\\begin{{tabular}}{{|p{{7cm}}|p{{6.5cm}}|}}
+\\hline
+\\textbf{{Vehicle (License plate)}} & \\textbf{{Employer}} \\\\
+{_latex_escape(item.vehicle_plates or "N/A")} & {_latex_escape(item.employer or "N/A")} \\\\\\hline
+\\textbf{{Prior arrests (YES/NO)}} & \\textbf{{Criminal record (YES/NO)}} \\\\
+{"Yes" if item.prior_arrests else "No"} & {"Yes" if item.prior_convictions else "No"} \\\\\\hline
+\\end{{tabular}}
+
+\\bigskip
+\\textbf{{Signature:}} \\textit{{{_latex_escape(item.signature or full_name)}}}
 
 \\end{{document}}"""
 
 
-def _poi_html(item: PersonOfInterestForm, portrait: str | None) -> str:
+def _poi_html(item: PersonOfInterestForm, portrait: str | None, hw_font: str) -> str:
     full_name = _poi_full_name(item)
-    address = _poi_address(item)
 
-    photo_td = ""
+    photo_block = ""
     if portrait:
-        photo_td = (
-            f'<td rowspan="6" style="width: 150px; vertical-align: top; padding: 8px;">'
-            f'<img src="{portrait}" style="width: 100%; border: 1px solid #ccc;"></td>'
+        photo_block = (
+            f'<img src="{portrait}" '
+            f'style="width: 120px; border: 1px solid #ccc; float: right; margin-left: 1em;">'
         )
 
     return f"""\
@@ -747,57 +858,88 @@ def _poi_html(item: PersonOfInterestForm, portrait: str | None) -> str:
 <html lang="en">
 <head><meta charset="UTF-8">
 <title>POI Form</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family={hw_font.replace(' ', '+')}&display=swap" rel="stylesheet">
 <style>
-  body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; }}
-  h1 {{ text-align: center; font-size: 1.3em; }}
-  h2 {{ font-size: 1em; margin: 1em 0 0.3em; }}
-  table {{ width: 100%; border-collapse: collapse; margin-bottom: 0.5em; }}
-  th, td {{ border: 1px solid #999; padding: 6px 10px; text-align: left; }}
-  th {{ background: #f5f5f5; width: 160px; }}
-  hr {{ border: none; border-top: 1px solid #999; margin: 1em 0; }}
+  body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; font-size: 10pt; }}
+  h1 {{ font-size: 1.4em; margin-bottom: 0.3em; }}
+  h2 {{ font-size: 0.9em; font-weight: bold; margin: 0.8em 0 0.3em; }}
+  table {{ width: 100%; border-collapse: collapse; margin-bottom: 0.3em; }}
+  td {{ border: 1px solid #999; padding: 4px 8px; vertical-align: top; }}
+  .label {{ font-weight: bold; font-size: 0.85em; display: block; }}
+  .val {{ font-family: '{hw_font}', cursive; font-size: 1.3em; }}
+  .sig {{ font-family: '{hw_font}', cursive; font-size: 1.5em; }}
 </style>
 </head>
 <body>
-<h1>PERSON OF INTEREST &mdash; INFORMATION FORM</h1>
-<hr>
+{photo_block}
+<h1>Person of Interest (PoI)</h1>
 
-<h2>PERSONAL DETAILS</h2>
+<h2>Personal Information</h2>
 <table>
-  <tr><th>Full Name</th><td>{_html_escape(full_name)}</td>{photo_td}</tr>
-  <tr><th>Nickname</th><td>{_html_escape(item.nickname or "N/A")}</td></tr>
-  <tr><th>Date of Birth</th><td>{_html_escape(item.date_of_birth)}</td></tr>
-  <tr><th>Nationality</th><td>{_html_escape(item.nationality or "N/A")}</td></tr>
-  <tr><th>ID Number</th><td>{_html_escape(item.id_number or "N/A")}</td></tr>
-  <tr><th>Occupation</th><td>{_html_escape(item.occupation or "N/A")}</td></tr>
+  <tr>
+    <td><span class="label">First Name</span><span class="val">{_html_escape(item.name)}</span></td>
+    <td><span class="label">Middle Name</span><span class="val">{_html_escape(item.middle_name or "")}</span></td>
+    <td><span class="label">Last Name</span><span class="val">{_html_escape(item.last_name)}</span></td>
+  </tr>
+  <tr>
+    <td><span class="label">Alias / Maiden Name</span><span class="val">{_html_escape(item.nickname or "N/A")}</span></td>
+    <td><span class="label">Date of Birth</span><span class="val">{_html_escape(item.date_of_birth)}</span></td>
+    <td><span class="label">Country of Birth</span><span class="val">{_html_escape(item.country_of_birth or "N/A")}</span></td>
+  </tr>
+  <tr>
+    <td><span class="label">Nationality</span><span class="val">{_html_escape(item.nationality or "N/A")}</span></td>
+    <td><span class="label">National Identity Number</span><span class="val">{_html_escape(item.id_number or "N/A")}</span></td>
+    <td><span class="label">Occupation</span><span class="val">{_html_escape(item.occupation or "N/A")}</span></td>
+  </tr>
 </table>
 
-<h2>CONTACT INFORMATION</h2>
+<h2>Contact Information</h2>
 <table>
-  <tr><th>Phone</th><td>{_html_escape(item.phone_country_code)} {_html_escape(item.phone_number)}</td></tr>
-  <tr><th>Address</th><td>{_html_escape(address)}</td></tr>
+  <tr>
+    <td style="width: 30%;"><span class="label">Phone Number (Country Code)</span><span class="val">{_html_escape(item.phone_country_code)}</span></td>
+    <td><span class="label">Phone Number</span><span class="val">{_html_escape(item.phone_number)}</span></td>
+  </tr>
+</table>
+<table>
+  <tr>
+    <td><span class="label">Home Address</span><span class="val">{_html_escape(item.street_address)}</span></td>
+    <td><span class="label">City</span><span class="val">{_html_escape(item.city)}</span></td>
+    <td style="width: 12%;"><span class="label">Zip Code</span><span class="val">{_html_escape(item.postal_code)}</span></td>
+    <td><span class="label">Country</span><span class="val">{_html_escape(item.country)}</span></td>
+  </tr>
 </table>
 
-<h2>PHYSICAL DESCRIPTION</h2>
+<h2>Physical Description</h2>
 <table>
-  <tr><th>Height (cm)</th><td>{_html_escape(item.height_cm or "N/A")}</td></tr>
-  <tr><th>Weight (kg)</th><td>{_html_escape(item.weight_kg or "N/A")}</td></tr>
-  <tr><th>Eye Color</th><td>{_html_escape(item.eye_color or "N/A")}</td></tr>
-  <tr><th>Hair Color</th><td>{_html_escape(item.hair_color or "N/A")}</td></tr>
-  <tr><th>Shoe Size (EU)</th><td>{_html_escape(item.shoe_size_eu or "N/A")}</td></tr>
+  <tr>
+    <td><span class="label">Height (cm)</span><span class="val">{_html_escape(item.height_cm or "N/A")}</span></td>
+    <td><span class="label">Weight (kg)</span><span class="val">{_html_escape(item.weight_kg or "N/A")}</span></td>
+  </tr>
+  <tr>
+    <td><span class="label">Eye Color</span><span class="val">{_html_escape(item.eye_color or "N/A")}</span></td>
+    <td><span class="label">Hair Color</span><span class="val">{_html_escape(item.hair_color or "N/A")}</span></td>
+    <td><span class="label">Shoe Size (EU/cm)</span><span class="val">{_html_escape(item.shoe_size_eu or "N/A")}</span></td>
+  </tr>
 </table>
 
-<h2>ADDITIONAL INFORMATION</h2>
+<h2>Additional Information</h2>
 <table>
-  <tr><th>Vehicle Plates</th><td>{_html_escape(item.vehicle_plates or "N/A")}</td></tr>
-  <tr><th>Employer</th><td>{_html_escape(item.employer or "N/A")}</td></tr>
-  <tr><th>Prior Arrests</th><td>{"Yes" if item.prior_arrests else "No"}</td></tr>
-  <tr><th>Prior Convictions</th><td>{"Yes" if item.prior_convictions else "No"}</td></tr>
+  <tr>
+    <td><span class="label">Vehicle Ownership (License plate)</span><span class="val">{_html_escape(item.vehicle_plates or "N/A")}</span></td>
+    <td><span class="label">Employer name</span><span class="val">{_html_escape(item.employer or "N/A")}</span></td>
+  </tr>
+  <tr>
+    <td><span class="label">Prior arrests (YES/NO)</span><span class="val">{"Yes" if item.prior_arrests else "No"}</span></td>
+    <td><span class="label">Criminal record (YES/NO)</span><span class="val">{"Yes" if item.prior_convictions else "No"}</span></td>
+  </tr>
 </table>
 
-<div style="margin-top: 2em;">
-  <hr>
-  <p><strong>Signature:</strong> <em>{_html_escape(item.signature or "")}</em></p>
-</div>
+<p style="font-size: 0.8em; margin-top: 1em;">I hereby confirm that all the information provided in this form is true and accurate to the best of my knowledge. I understand that providing false or misleading information may have legal consequences.</p>
+
+<p><strong>Signature</strong></p>
+<p class="sig">{_html_escape(item.signature or full_name)}</p>
+<hr style="width: 50%; border-style: dashed; margin-left: 0;">
 </body>
 </html>"""
 
@@ -1029,6 +1171,170 @@ def _sms_html(item: SmsLog) -> str:
 </div>
 <hr>
 {chat}
+</body>
+</html>"""
+
+
+# ===========================================================================
+# Handwritten Note
+# ===========================================================================
+
+
+def _handwritten_typst(item: HandwrittenNote, font: str) -> str:
+    return f"""\
+#set page(margin: (x: 2.5cm, y: 2.5cm), fill: rgb("#fffef5"))
+#set text(font: "{font}", size: 14pt)
+#set par(leading: 1em)
+
+{item.content}
+"""
+
+
+def _handwritten_html(item: HandwrittenNote, font: str) -> str:
+    return f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8">
+<title>Note</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family={font.replace(' ', '+')}&display=swap" rel="stylesheet">
+<style>
+  body {{
+    font-family: '{font}', cursive;
+    font-size: 18px;
+    max-width: 600px;
+    margin: 60px auto;
+    padding: 40px;
+    background: #fffef5;
+    line-height: 2;
+    min-height: 80vh;
+  }}
+</style>
+</head>
+<body>
+<div style="white-space: pre-wrap;">{_html_escape(item.content)}</div>
+</body>
+</html>"""
+
+
+# ===========================================================================
+# Instagram Post
+# ===========================================================================
+
+
+def _instagram_typst(item: InstagramPost, image: str | None) -> str:
+    image_block = f'#image("{image}", width: 100%)\n' if image else ""
+    return f"""\
+#set page(margin: 0pt, width: 14cm, height: auto)
+#set text(font: "New Computer Modern", size: 10pt)
+
+#rect(fill: white, width: 100%, inset: 0pt)[
+  #box(width: 100%, inset: (x: 12pt, y: 8pt))[
+    #text(weight: "bold")[{item.username}]
+  ]
+  {image_block}
+  #box(width: 100%, inset: (x: 12pt, y: 8pt))[
+    #text(fill: rgb("#333"))[\\u{{2764}} {item.likes} likes]
+    #v(0.2em)
+    #text(weight: "bold")[{item.username}] {item.caption}
+    #v(0.2em)
+    #text(size: 8pt, fill: rgb("#999"))[{item.date}]
+  ]
+]
+"""
+
+
+def _instagram_html(item: InstagramPost, image: str | None) -> str:
+    image_block = f'<img src="{image}" style="width: 100%; display: block;">' if image else ""
+    return f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8">
+<title>Instagram Post</title>
+<style>
+  body {{ font-family: -apple-system, 'Segoe UI', Arial, sans-serif; margin: 40px auto; max-width: 500px; padding: 0; background: #fafafa; }}
+  .post {{ background: white; border: 1px solid #dbdbdb; border-radius: 3px; }}
+  .header {{ padding: 10px 14px; font-weight: bold; font-size: 14px; }}
+  .caption {{ padding: 10px 14px; font-size: 14px; line-height: 1.4; }}
+  .caption b {{ font-weight: 600; }}
+  .likes {{ padding: 6px 14px; font-weight: 600; font-size: 14px; }}
+  .date {{ padding: 4px 14px 10px; font-size: 10px; color: #999; text-transform: uppercase; }}
+</style>
+</head>
+<body>
+<div class="post">
+  <div class="header">{_html_escape(item.username)}</div>
+  {image_block}
+  <div class="likes">\u2764\ufe0f {item.likes} likes</div>
+  <div class="caption"><b>{_html_escape(item.username)}</b> {_html_escape(item.caption)}</div>
+  <div class="date">{_html_escape(item.date)}</div>
+</div>
+</body>
+</html>"""
+
+
+# ===========================================================================
+# Facebook Post
+# ===========================================================================
+
+
+def _facebook_typst(item: FacebookPost) -> str:
+    comments = ""
+    if item.comments:
+        comment_lines = "\n".join(
+            f"  #box(inset: (left: 8pt, y: 4pt))[#text(size: 9pt)[{c}]]"
+            for c in item.comments
+        )
+        comments = f"\n  #line(length: 100%, stroke: 0.3pt)\n{comment_lines}"
+    return f"""\
+#set page(margin: (x: 2cm, y: 2cm))
+#set text(font: "New Computer Modern", size: 10pt)
+
+#rect(fill: white, stroke: 0.5pt + rgb("#ddd"), width: 100%, radius: 4pt, inset: 12pt)[
+  #text(weight: "bold", size: 11pt)[{item.author_name}]
+  #h(1fr)
+  #text(size: 8pt, fill: rgb("#999"))[{item.date}]
+
+  #v(0.5em)
+
+  {item.content}
+
+  #v(0.5em)
+  #text(fill: rgb("#666"), size: 9pt)[\\u{{1F44D}} {item.likes}]{comments}
+]
+"""
+
+
+def _facebook_html(item: FacebookPost) -> str:
+    comments_html = ""
+    if item.comments:
+        c_items = "\n".join(
+            f'<div style="padding: 6px 0; font-size: 13px; border-top: 1px solid #eee;">{_html_escape(c)}</div>'
+            for c in item.comments
+        )
+        comments_html = f'<div style="margin-top: 8px;">{c_items}</div>'
+    return f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8">
+<title>Facebook Post</title>
+<style>
+  body {{ font-family: -apple-system, 'Segoe UI', Arial, sans-serif; margin: 40px auto; max-width: 550px; background: #f0f2f5; padding: 20px; }}
+  .post {{ background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }}
+  .author {{ font-weight: 600; font-size: 15px; }}
+  .date {{ font-size: 12px; color: #999; }}
+  .content {{ margin: 10px 0; font-size: 15px; line-height: 1.4; white-space: pre-wrap; }}
+  .likes {{ font-size: 13px; color: #666; }}
+</style>
+</head>
+<body>
+<div class="post">
+  <div><span class="author">{_html_escape(item.author_name)}</span></div>
+  <div class="date">{_html_escape(item.date)}</div>
+  <div class="content">{_html_escape(item.content)}</div>
+  <div class="likes">\U0001F44D {item.likes}</div>
+  {comments_html}
+</div>
 </body>
 </html>"""
 

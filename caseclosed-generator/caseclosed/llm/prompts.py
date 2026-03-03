@@ -116,6 +116,21 @@ Generate suspects including the killer. For each suspect:
 - Add personal secrets that create suspicion but may be unrelated to the murder
 - Include full personal details (physical description, contact info, etc.) for their POI forms
 - Personality traits that come through in interrogation
+- "relationships": a dict mapping other suspect names to a short description of their \
+relationship and any tensions, grudges, alliances, or shared secrets. Every suspect can \
+have 1-2 meaningful relationships with OTHER suspects (not just the victim).
+
+INTER-CHARACTER INTRIGUES (CRITICAL):
+- The suspects should NOT exist in isolation. They must have pre-existing relationships, \
+conflicts, alliances, and secrets that involve each other.
+- Examples: business rivalries, affairs, debts owed, old grudges, shared alibis that \
+contradict, one suspect covering for another, blackmail between suspects, family tensions.
+- These intrigues create a web of suspicion: suspects will point fingers at each other \
+during interrogations, and evidence about one suspect may implicate another.
+- Some relationships should be hidden (only revealed through evidence), while others \
+are openly known.
+- At least one pair of suspects should have a shared secret or conflicting accounts \
+of the same event.
 
 The killer ({truth.killer_name}) must have a plausible-sounding alibi that can be \
 disproven by careful examination of the evidence.\
@@ -130,7 +145,19 @@ def episodes_prompt(
     assert case.truth is not None
     truth = case.truth
 
-    suspect_names = [s.name for s in case.suspects]
+    suspects_detail = "\n".join(
+        f"  - {s.name} (age {s.age}, {s.occupation})\n"
+        f"    Relationship to victim: {s.relationship_to_victim}\n"
+        f"    Apparent motive: {s.motive}\n"
+        f"    Claimed alibi: {s.alibi}\n"
+        f"    Truth behind alibi: {s.alibi_truth}\n"
+        f"    Secrets: {'; '.join(s.secrets) if s.secrets else 'none'}\n"
+        f"    Personality: {', '.join(s.personality_traits) if s.personality_traits else 'N/A'}\n"
+        f"    Relationships with other suspects: {'; '.join(f'{k}: {v}' for k, v in s.relationships.items()) if s.relationships else 'none'}\n"
+        f"    Is the killer: {s.is_killer}"
+        for s in case.suspects
+    )
+
     content = f"""\
 Design the episode structure for this mystery.
 
@@ -141,27 +168,74 @@ ESTABLISHED TRUTH:
 - Crime scene: {truth.crime_scene}
 - Timeline: {_format_timeline(truth)}
 
-SUSPECTS: {', '.join(suspect_names)}
+SUSPECTS (full dossiers — use these to craft a fair, layered investigation):
+{suspects_detail}
 
 Create a sequence of episodes. Each episode:
 - Has a title and a specific objective (a question the player must answer to progress)
-- Includes an intro_letter -- narrative text from the lead investigator setting the scene
+- Includes an intro_letter — narrative text from the lead investigator setting the scene.
+The letter asks the person the question, and states that they can go to the next episode \
+once they're sure of the answer.
+- For episodes after the first, the intro letter should explain what the player just solved in the previous episode,
+and which evidence they used. This only applies to answers to the last episode, and not other uncovered things.
 - The first episode should introduce the case broadly
 - Each subsequent episode focuses on a specific aspect (alibis, forensics, connections, etc.)
 - The final episode's objective should lead the player to identify the killer
 - Objectives should be concrete: "Who was lying about being at the restaurant?" not "Find clues"
 
-PACING RULES (CRITICAL):
-- Do NOT single out or point at specific suspects in early episodes. Keep early episode \
-objectives broad (about the situation, the timeline, the scene) rather than naming suspects.
+PACING & SUSPECT FUNNEL (CRITICAL):
+- The mystery must follow a "wide-to-narrow" suspect funnel:
+  * Early episodes: ALL suspects look equally plausible. Present each suspect's apparent \
+motive and surface-level alibi so the player sees everyone as a potential killer.
+  * Middle episodes: Evidence begins to clear some suspects (their alibis check out, their \
+secrets turn out to be unrelated to the murder). But at least 2-3 suspects should still \
+seem viable.
+  * Late episodes: Contradictions and forensic details narrow it down. Only the final \
+episode should give the player enough to definitively identify the killer.
+- Do NOT single out or point at specific suspects in early or middle episodes. Keep early and middle episode \
+objectives broad rather than naming suspects. They should instead be done to uncover things, intrigues, lies, etc.
+- The first episode should always have some interrogation reports and Person of Interest forms. 
+There can be mutiple interrogation reports between suspects between different episodes,
+and some of them can be introduced later, but we need atleast som early.
+- Use the suspects' secrets and lies strategically: innocent suspects' secrets should \
+create suspicion early on but be explained away BY EVIDENCE later, keeping the player guessing.
 - Do NOT hint at which specific evidence items the player should look at. The player must \
 discover connections on their own.
-- Gradually narrow the focus from general investigation to specific contradictions.
+- NEVER write in the letter that someone is innocent or guilty (till the last letter).
+This is up for the player to determine.
+- Create intrigues between the characters, we find out people have much to lose etc. More people should have a plausible motive, even if they are innocent.
+The player should be kept guessing for as long as possible.
+- Do NOT give instructions pointing directly at any specific evidence item.
+- VERY IMPORTANT: The episodes should feel like a story progressing. The player should \
+feel like they're a detective on the case, not just solving isolated puzzles.
+- The killer should not receive more narrative weight than other suspects until late episodes.
 
 HINTS:
 - Write exactly 2-3 hints for EACH episode, stored in the "hints" field.
-- Hints should help stuck players without outright spoiling the answer.
-- Progress from a gentle nudge (hint 1) to a stronger pointer (hint 3).
+- Hints should help stuck players without outright spoiling the answer. They should refer \
+to evidence items, first maybe only hinting at what to look, but getting more direct with \
+each hint.
+- Progress from a gentle nudge (hint 1) to a stronger pointer (hint 3). Follow a structure like:
+Hint 1: Indirect — suggests category of evidence
+Hint 2: Directs attention to a specific type of document
+Hint 3: Points clearly to the contradiction, but does not state the answer
+
+LOOSE EXAMPLES OF EPISODE OBJECTIVES (for inspiration only — do NOT copy these):
+
+Example 1:
+- Objective 1: What is Harper not telling us? (uncovers a secret relationship or a secret. does not have to be the killer)
+- Objective 2: What is the password to Liam's phone? (uncovers some sketchy messages, but not the full truth)
+- Objective 3: Who is lying about their alibi? (narrows down suspects, but can be multiple people)
+- Objective 4: What hidden secrets can you uncover? (uncovers key secrets that point towards the killer, but still not definitive)
+- Objective 5: Who is the killer? What is your reasoning? (the final reveal, but the player must connect the dots on their own based on all the evidence)
+
+Example 2:
+- Objective 1: What was the cause of death?
+- Objective 2: Who didnt have a chance to be at all the band's concerts? (removes some suspects)
+- Objective 3: Who owns the blog that posted about the victim's affair? (uncovers a key piece of evidence, doesnt have to do with the killer)
+- Objective 4: Oscar was found to own the blog. What do the blog posts tell us about the victims wereabouts on the day? (uncovers more of the victims timeline, can be used later)
+- Objective 5: Who is the killer? (the final reveal, but the player must connect the dots on their own based on all the evidence)
+
 
 PREVIOUS EPISODE SOLUTIONS:
 - For episode 1, leave "previous_episode_solution" empty (there is no prior episode).
@@ -187,7 +261,8 @@ def evidence_plan_prompt(
         for e in case.episodes
     )
     suspects_summary = "\n".join(
-        f"  - {s.name}: {s.occupation}, motive: {s.motive}"
+        f"  - {s.name}: {s.occupation}, motive: {s.motive}, "
+        f"relationships: {'; '.join(f'{k}: {v}' for k, v in s.relationships.items()) if s.relationships else 'none'}"
         for s in case.suspects
     )
 
@@ -210,7 +285,7 @@ EPISODES:
 
 For each evidence item, specify:
 - id: a short slug (e.g., "interrogation-ingrid", "newspaper-article", "crime-scene-photo")
-- type: one of "interrogation", "poi_form", "letter", "image", "raw_text", "phone_log", "sms_log", "email"
+- type: one of "interrogation", "poi_form", "letter", "image", "raw_text", "phone_log", "sms_log", "email", "handwritten_note", "instagram_post", "facebook_post", "invoice", "receipt"
 - title: display title
 - brief_description: what this evidence contains
 - introduced_in_episode: which episode first presents this evidence
@@ -258,6 +333,9 @@ def evidence_content_prompt(
             (s for s in case.suspects if s.name == plan_item.suspect_name), None
         )
         if suspect:
+            relationships_str = "; ".join(
+                f"{k}: {v}" for k, v in suspect.relationships.items()
+            ) if suspect.relationships else "none"
             suspect_info = f"""
 SUSPECT DETAILS (for consistency):
 - Name: {suspect.name}, Age: {suspect.age}, Occupation: {suspect.occupation}
@@ -265,6 +343,7 @@ SUSPECT DETAILS (for consistency):
 - True alibi: {suspect.alibi_truth}
 - Personality: {', '.join(suspect.personality_traits)}
 - Secrets: {', '.join(suspect.secrets)}
+- Relationships with other suspects: {relationships_str}
 - Is killer: {suspect.is_killer}
 """
 
@@ -279,6 +358,10 @@ Generate a realistic police interrogation transcript. Include:
 - The suspect's personality should come through in their responses
 - If this is the killer, their answers should be plausible but contain subtle inconsistencies
 - IMPORTANT: Use the interrogating detective from CASE PERSONNEL as the "interviewer" field
+- FINGER-POINTING: Some of the suspect should mention, accuse, or cast suspicion on OTHER suspects \
+during the interrogation. They might say things like "You should talk to X, they had a \
+real grudge" or "I saw Y near the scene" or deflect blame. This creates inter-character \
+intrigue and gives the player leads to cross-reference between interrogations.
 - KEEP IT SHORT: Maximum 15-20 dialogue exchanges total.""",
         "poi_form": """\
 Generate a filled-out Person of Interest form with all personal details. \
@@ -347,7 +430,67 @@ Generate a realistic email message. Include:
 - text_typst: Typst-formatted version of body (two newlines for paragraphs, *bold*, _italic_)
 - text_html: HTML-formatted version of body
 Make it feel like a real email with appropriate tone for the sender.""",
+        "handwritten_note": """\
+Generate a handwritten note. Include:
+- author: the name of the person who wrote it (must match a suspect or known character)
+- content: the text of the note (keep it short and natural, like a real handwritten note -- \
+a few sentences to a short paragraph)
+- context: where/how the note was found (e.g. "Found in the victim's desk drawer")
+The tone should be casual and personal, with informal language.""",
+        "instagram_post": """\
+Generate an Instagram post. Include:
+- username: the poster's Instagram handle (realistic, not their full name)
+- caption: the post caption (with hashtags if appropriate)
+- likes: number of likes (realistic number)
+- date: when it was posted
+- image_prompt: a detailed prompt for AI image generation describing what the photo shows
+Make it feel like a real Instagram post.""",
+        "facebook_post": """\
+Generate a Facebook post. Include:
+- author_name: the poster's display name
+- content: the post text
+- date: when it was posted
+- likes: number of reactions (realistic)
+- comments: a list of 0-3 comment strings from other people (format: "Name: comment text")
+Make it feel like a real Facebook post with casual social media tone.""",
+        "invoice": """\
+Generate a realistic business invoice. Include:
+- invoice_number: a realistic invoice number (e.g. "INV-2024-0847")
+- date: the invoice date
+- seller_name: business or individual issuing the invoice
+- seller_address: their address
+- buyer_name: the person or business being invoiced
+- buyer_address: their address
+- items: a list of line items, each with description, quantity, unit_price, and total
+- subtotal: sum before tax
+- tax: tax amount (can be empty if not applicable)
+- total: final total
+- payment_terms: e.g. "Net 30", "Due on receipt" (optional)
+- notes: any additional notes (optional)
+Make it feel like an authentic business document. The items and amounts should be \
+realistic and consistent with the case context.""",
+        "receipt": """\
+Generate a realistic store receipt. Include:
+- store_name: the store or business name
+- store_address: the store's address
+- date: date and time of purchase
+- items: a list of purchased items, each with description, quantity, and price
+- subtotal: sum before tax
+- tax: tax amount (can be empty if not applicable)
+- total: final total
+- payment_method: e.g. "VISA ****4832", "Cash" (optional)
+- transaction_id: receipt/transaction number (optional)
+Make it feel like a real receipt. Include items that are relevant to the investigation \
+mixed with mundane purchases for realism.""",
     }
+
+    # Build the full evidence plan summary so the LLM knows what every other
+    # item is responsible for and can avoid duplicating or leaking their clues.
+    other_plan_items = [p for p in case.evidence_plan if p.id != plan_item.id]
+    evidence_plan_summary = "\n".join(
+        f"  - [{p.id}] ({p.type}) \"{p.title}\" — reveals: {p.clue_reveals}"
+        for p in other_plan_items
+    )
 
     # Build personnel context
     personnel_info = ""
@@ -365,7 +508,7 @@ CASE PERSONNEL (use these EXACT names for consistency across all evidence):
     content = f"""\
 Generate the full content for this evidence item.
 
-EVIDENCE PLAN:
+THIS EVIDENCE ITEM:
 - ID: {plan_item.id}
 - Type: {plan_item.type}
 - Title: {plan_item.title}
@@ -374,6 +517,13 @@ EVIDENCE PLAN:
 - Introduced in episode: {plan_item.introduced_in_episode}
 - Also used in episodes: {plan_item.also_used_in_episodes}
 {suspect_info}{personnel_info}
+ALL OTHER EVIDENCE ITEMS IN THE CASE (for reference — do NOT include their clues here):
+{evidence_plan_summary}
+
+^^^ Each of the items above is responsible for revealing its own clue. Do NOT let this \
+evidence item reveal, hint at, or duplicate information that belongs to another item. \
+Stick strictly to what THIS item is supposed to convey.
+
 CASE TRUTH (for consistency only — do NOT leak extra facts from this section):
 - Victim: {truth.victim.name}, died at crime scene: {truth.crime_scene}
 - Cause of death: {truth.victim.cause_of_death}

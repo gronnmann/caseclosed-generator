@@ -16,7 +16,8 @@ class EvidencePlanItem(BaseModel):
     id: str
     type: Literal[
         "interrogation", "poi_form", "letter", "image", "raw_text",
-        "phone_log", "sms_log", "email",
+        "phone_log", "sms_log", "email", "handwritten_note",
+        "instagram_post", "facebook_post", "invoice", "receipt",
     ]
     title: str
     brief_description: str  # What this evidence contains/reveals
@@ -179,6 +180,89 @@ class Email(BaseModel):
     text_html: str = ""
 
 
+class HandwrittenNote(BaseModel):
+    """A handwritten note by a suspect or other person."""
+
+    type: Literal["handwritten_note"] = "handwritten_note"
+    plan_id: str
+    author: str  # Name of the writer (used to look up handwriting font)
+    content: str  # The text of the note
+    context: str = ""  # Where/how the note was found
+
+
+class InstagramPost(BaseModel):
+    """An Instagram post -- image with caption."""
+
+    type: Literal["instagram_post"] = "instagram_post"
+    plan_id: str
+    username: str
+    caption: str
+    likes: int = 0
+    date: str = ""
+    image_prompt: str = ""  # For AI image generation
+    image_filename: str | None = None  # Set after generation
+
+
+class FacebookPost(BaseModel):
+    """A Facebook post -- text only."""
+
+    type: Literal["facebook_post"] = "facebook_post"
+    plan_id: str
+    author_name: str
+    content: str
+    date: str = ""
+    likes: int = 0
+    comments: list[str] = []  # Optional comment strings
+
+
+class InvoiceLineItem(BaseModel):
+    description: str
+    quantity: int = 1
+    unit_price: str  # e.g. "150.00"
+    total: str  # e.g. "300.00"
+
+
+class Invoice(BaseModel):
+    """A business invoice."""
+
+    type: Literal["invoice"] = "invoice"
+    plan_id: str
+    invoice_number: str
+    date: str
+    seller_name: str
+    seller_address: str = ""
+    buyer_name: str
+    buyer_address: str = ""
+    items: list[InvoiceLineItem]
+    subtotal: str
+    tax: str = ""
+    total: str
+    payment_terms: str = ""
+    notes: str = ""
+
+
+class ReceiptLineItem(BaseModel):
+    description: str
+    quantity: int = 1
+    price: str  # e.g. "12.99"
+
+
+class Receipt(BaseModel):
+    """A store receipt / purchase record."""
+
+    type: Literal["receipt"] = "receipt"
+    plan_id: str
+    store_name: str
+    store_address: str = ""
+    date: str
+    items: list[ReceiptLineItem]
+    subtotal: str
+    tax: str = ""
+    total: str
+    payment_method: str = ""
+    transaction_id: str = ""
+
+
 # Discriminated union of all evidence content types
 EvidenceItem = Annotated[
     InterrogationReport
@@ -187,7 +271,12 @@ EvidenceItem = Annotated[
     | ImageEvidence
     | RawText
     | PhoneLog
+    | Invoice
+    | Receipt
     | SmsLog
-    | Email,
+    | Email
+    | HandwrittenNote
+    | InstagramPost
+    | FacebookPost,
     Field(discriminator="type"),
 ]

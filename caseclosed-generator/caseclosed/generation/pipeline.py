@@ -10,6 +10,7 @@ from rich.panel import Panel
 from rich.table import Table
 from caseclosed.generation.episodes import generate_episodes
 from caseclosed.generation.evidence import (
+    edit_evidence_image,
     generate_evidence_content,
     generate_evidence_image,
 )
@@ -468,6 +469,54 @@ def _edit_image_prompt(current_prompt: str, edit_instructions: str) -> str:
     return generate_text(messages)
 
 
+def _confirm_image_action(
+    prompt_text: str = "Accept image? (y/n/p <prompt edit>/e <image edit>)",
+) -> tuple[str, str | None]:
+    """Ask the user to accept, regenerate, edit prompt, or edit image directly.
+
+    Returns:
+        ("accept", None)
+        ("regenerate", None)
+        ("edit_prompt", <instructions>)  — modify the text prompt, then regen
+        ("edit_image", <instructions>)   — send the image + instructions for direct editing
+    """
+    from caseclosed.config import settings
+
+    while True:
+        console.print()
+        console.print(
+            f"  [dim]model {settings.default_model} | "
+            f"image-model {settings.default_image_model} | "
+            f"image-modality {','.join(settings.image_model_modalities)}[/dim]"
+        )
+        response = console.input(f"[bold yellow]{prompt_text}:[/bold yellow] ").strip()
+
+        # Model change commands (same as _confirm_or_edit)
+        if response.lower().startswith("model "):
+            new_model = response[6:].strip()
+            if new_model:
+                settings.default_model = new_model
+                console.print(f"  [green]Text model changed to:[/green] {new_model}")
+            continue
+        if response.lower().startswith("image-model "):
+            new_model = response[12:].strip()
+            if new_model:
+                settings.default_image_model = new_model
+                console.print(f"  [green]Image model changed to:[/green] {new_model}")
+            continue
+
+        if response.lower() in ("y", "yes", ""):
+            return ("accept", None)
+        if response.lower() in ("n", "no"):
+            return ("regenerate", None)
+        if response.lower().startswith("p "):
+            return ("edit_prompt", response[2:].strip())
+        if response.lower().startswith("e "):
+            return ("edit_image", response[2:].strip())
+        # Bare text defaults to prompt edit for backwards compat
+        return ("edit_prompt", response)
+
+
 def _generate_image_inline(case: Case, evidence: ImageEvidence) -> None:
     """Generate the actual image for an ImageEvidence item right after content approval.
 
@@ -501,11 +550,24 @@ def _generate_image_inline(case: Case, evidence: ImageEvidence) -> None:
                 continue
             return
 
-        img_action, _ = _confirm_or_edit("Accept generated image? (y/n to regenerate)")
+        img_action, img_instructions = _confirm_image_action()
         if img_action == "accept":
             save_case(case)
             console.print(f"  [green]\u2713[/green] Image accepted: {evidence.plan_id}")
             return
+        elif img_action == "edit_prompt" and img_instructions:
+            console.print("  [bold blue]Editing prompt...[/bold blue]")
+            evidence.image_prompt = _edit_image_prompt(evidence.image_prompt, img_instructions)
+            evidence.image_filename = None
+            console.print("[dim]Prompt updated. Regenerating...[/dim]")
+        elif img_action == "edit_image" and img_instructions:
+            console.print("  [bold blue]Editing image directly...[/bold blue]")
+            try:
+                filename = edit_evidence_image(case, evidence, img_instructions)
+                evidence.image_filename = filename
+                console.print(f"  [green]\u2713[/green] Edited image saved: {filename}")
+            except Exception as e:
+                console.print(f"  [red]\u2717 Image edit failed: {e}[/red]")
         else:
             evidence.image_filename = None
             console.print("[dim]Regenerating...[/dim]")
@@ -617,11 +679,24 @@ def _step_images(case: Case) -> None:
                 break
 
             # Ask if the generated image is acceptable
-            img_action, _ = _confirm_or_edit("Accept generated image? (y/n to regenerate)")
+            img_action, img_instructions = _confirm_image_action()
             if img_action == "accept":
                 save_case(case)
                 console.print(f"  [green]\u2713[/green] Accepted: {img_evidence.plan_id}")
                 break
+            elif img_action == "edit_prompt" and img_instructions:
+                console.print("  [bold blue]Editing prompt...[/bold blue]")
+                img_evidence.image_prompt = _edit_image_prompt(img_evidence.image_prompt, img_instructions)
+                img_evidence.image_filename = None
+                console.print("[dim]Prompt updated. Regenerating...[/dim]")
+            elif img_action == "edit_image" and img_instructions:
+                console.print("  [bold blue]Editing image directly...[/bold blue]")
+                try:
+                    filename = edit_evidence_image(case, img_evidence, img_instructions)
+                    img_evidence.image_filename = filename
+                    console.print(f"  [green]\u2713[/green] Edited image saved: {filename}")
+                except Exception as e:
+                    console.print(f"  [red]\u2717 Image edit failed: {e}[/red]")
             else:
                 # Reset filename so it regenerates
                 img_evidence.image_filename = None

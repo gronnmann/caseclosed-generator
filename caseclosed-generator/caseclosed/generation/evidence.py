@@ -6,12 +6,17 @@ from caseclosed.models.evidence import (
     EvidenceItem,
     EvidencePlanItem,
     Email,
+    FacebookPost,
+    HandwrittenNote,
     ImageEvidence,
+    InstagramPost,
     InterrogationReport,
+    Invoice,
     Letter,
     PersonOfInterestForm,
     PhoneLog,
     RawText,
+    Receipt,
     SmsLog,
 )
 from caseclosed.llm.prompts import evidence_content_prompt
@@ -27,6 +32,11 @@ _TYPE_MAP: dict[str, type] = {
     "phone_log": PhoneLog,
     "sms_log": SmsLog,
     "email": Email,
+    "handwritten_note": HandwrittenNote,
+    "instagram_post": InstagramPost,
+    "facebook_post": FacebookPost,
+    "invoice": Invoice,
+    "receipt": Receipt,
 }
 
 
@@ -64,6 +74,22 @@ def generate_evidence_image(
     image_data = generate_image(evidence.image_prompt, reference_images=reference_images or None)
     filename = f"{evidence.plan_id}.png"
     save_image(case.id, filename, image_data)
+    return filename
+
+
+def edit_evidence_image(
+    case: Case,
+    evidence: ImageEvidence,
+    edit_instructions: str,
+) -> str:
+    """Edit an existing generated image with instructions. Returns the filename."""
+    from caseclosed.llm.client import edit_image
+
+    img_path = images_dir(case.id) / f"{evidence.plan_id}.png"
+    original_bytes = img_path.read_bytes()
+    edited_data = edit_image(original_bytes, edit_instructions)
+    filename = f"{evidence.plan_id}.png"
+    save_image(case.id, filename, edited_data)
     return filename
 
 

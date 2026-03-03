@@ -29,9 +29,16 @@ def generate_suspects(
     response = generate_structured(SuspectsResponse, messages)
     # Strip portrait fields — the LLM may hallucinate values for these,
     # but they should only be set by actual image generation.
-    for s in response.suspects:
+    # Assign handwriting fonts programmatically (random, unique per suspect).
+    import random
+    from caseclosed.models.suspect import HANDWRITING_FONTS
+    fonts = list(HANDWRITING_FONTS)
+    random.shuffle(fonts)
+    for i, s in enumerate(response.suspects):
         s.portrait_prompt = None
         s.portrait_filename = None
+        if not s.handwriting_font:
+            s.handwriting_font = fonts[i % len(fonts)]
     return response.suspects
 
 

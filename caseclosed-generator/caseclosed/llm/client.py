@@ -204,3 +204,89 @@ def generate_image(
                 )
 
     raise last_error  # type: ignore[misc]
+
+
+def edit_image(
+    image_bytes: bytes,
+    edit_instructions: str,
+    model: str | None = None,
+) -> bytes:
+    """Edit an existing image by sending it with edit instructions.
+
+    Attaches the original image as a reference and asks the model to modify it.
+    Returns raw image bytes of the edited result.
+    """
+    import base64
+
+    import httpx
+
+    model = model or settings.default_image_model
+    b64 = base64.b64encode(image_bytes).decode("ascii")
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{b64}"},
+                },
+                {
+                    "type": "text",
+                    "text": f"Edit this image according to these instructions: {edit_instructions}",
+                },
+            ],
+        }
+    ]
+
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = httpx.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.openrouter_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "modalities": settings.image_model_modalities,
+                },
+                timeout=120.0,
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            message = result["choices"][0]["message"]
+            images = message.get("images")
+            if not images:
+                raise RuntimeError(
+                    f"No images in response. Content: {str(message.get('content', ''))[:200]}"
+                )
+
+            image_url: str = images[0]["image_url"]["url"]
+
+            if image_url.startswith("data:"):
+                b64_part = image_url.split(",", 1)[1]
+                return base64.b64decode(b64_part)
+
+            img_response = httpx.get(image_url, timeout=60.0)
+            img_response.raise_for_status()
+            return img_response.content
+        except Exception as e:
+            last_error = e
+            if attempt < MAX_RETRIES:
+                console.print(
+                    f"  [yellow]Attempt {attempt}/{MAX_RETRIES} failed: {e}[/yellow]"
+                )
+                console.print(
+                    f"  [dim]Retrying in {RETRY_DELAY_SECONDS}s...[/dim]"
+                )
+                time.sleep(RETRY_DELAY_SECONDS)
+            else:
+                console.print(
+                    f"  [red]Attempt {attempt}/{MAX_RETRIES} failed: {e}[/red]"
+                )
+
+    raise last_error  # type: ignore[misc]
