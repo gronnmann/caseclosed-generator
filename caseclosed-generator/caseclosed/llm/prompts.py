@@ -44,6 +44,7 @@ def truth_prompt(
     difficulty: str | None = None,
 ) -> list[dict[str, str]]:
     """Prompt to generate the core truth of the mystery."""
+    suspect_count_str = str(suspect_count) if suspect_count else "4-6"
     parts = [
         f"Create the hidden truth for a murder mystery with this premise:\n\n\"{premise}\"",
         "\nDesign the core facts:",
@@ -54,9 +55,24 @@ def truth_prompt(
         "- Where? (crime scene description)",
         "- Timeline of key events leading up to and including the murder",
         "- What key evidence ultimately proves the killer's guilt?",
+        f"\nSUSPECT SKETCHES (CRITICAL — generate exactly {suspect_count_str} suspect_sketches):",
+        "For EACH suspect (including the killer), provide:",
+        "- name: their full name",
+        "- role: their role relative to the victim (e.g. 'business partner', 'ex-lover', 'neighbor')",
+        "- apparent_motive: why they LOOK guilty (this is the red herring for innocent suspects, real motive for the killer)",
+        "- secret: a hidden fact that creates suspicion (can be unrelated to the murder for innocents)",
+        "- relationship_to_other_suspects: how they connect to at least 1-2 OTHER suspects (rivalries, affairs, debts, alliances)",
+        "- is_killer: true for exactly one suspect",
+        "\nIMPORTANT — MULTI-SUSPECT DESIGN:",
+        "- Every suspect must have a COMPELLING reason to be considered the killer. The story is not about one suspect —",
+        "  it's about a web of interconnected people where ANYONE could be guilty.",
+        "- Suspects must be connected to EACH OTHER, not just to the victim. Create a network of relationships:",
+        "  affairs between suspects, business deals gone wrong, old grudges, shared secrets, financial dependencies.",
+        "- The timeline should involve MULTIPLE suspects' actions, not just the killer's.",
+        "- At least 2-3 suspects should have suspicious activity in the timeline that could be mistaken for the murder.",
+        "- The killer's guilt should only become clear when multiple pieces of evidence are cross-referenced —",
+        "  no single piece of evidence should point definitively at the killer.",
     ]
-    if suspect_count:
-        parts.append(f"\nThe mystery should accommodate roughly {suspect_count} suspects.")
     if episode_count:
         parts.append(f"Plan for approximately {episode_count} episodes/chapters.")
     if difficulty:
@@ -99,8 +115,15 @@ def suspects_prompt(
     assert case.truth is not None
     truth = case.truth
 
+    sketches_text = "\n".join(
+        f"  - {sk.name} ({sk.role}): motive={sk.apparent_motive}, "
+        f"secret={sk.secret}, connections={sk.relationship_to_other_suspects}, "
+        f"is_killer={sk.is_killer}"
+        for sk in truth.suspect_sketches
+    ) if truth.suspect_sketches else "(no sketches — generate suspects from scratch)"
+
     content = f"""\
-Based on this established truth, generate the suspects for the mystery.
+Based on this established truth, flesh out the suspects for the mystery.
 
 ESTABLISHED TRUTH:
 - Victim: {truth.victim.name}, {truth.victim.age}, {truth.victim.occupation}
@@ -110,15 +133,18 @@ ESTABLISHED TRUTH:
 - Crime scene: {truth.crime_scene}
 - Timeline: {_format_timeline(truth)}
 
-Generate suspects including the killer. For each suspect:
-- Give them a believable apparent motive (red herring for innocent ones)
+SUSPECT SKETCHES (designed with the truth — use these as the foundation):
+{sketches_text}
+
+For each suspect sketch above, flesh them out into a full suspect:
+- Keep the name, role, apparent motive, and secret from the sketch
 - Create a claimed alibi AND the truth of what they were actually doing
 - Add personal secrets that create suspicion but may be unrelated to the murder
 - Include full personal details (physical description, contact info, etc.) for their POI forms
 - Personality traits that come through in interrogation
 - "relationships": a dict mapping other suspect names to a short description of their \
-relationship and any tensions, grudges, alliances, or shared secrets. Every suspect can \
-have 1-2 meaningful relationships with OTHER suspects (not just the victim).
+relationship and any tensions, grudges, alliances, or shared secrets. Build on the \
+relationship_to_other_suspects from the sketches and expand them.
 
 INTER-CHARACTER INTRIGUES (CRITICAL):
 - The suspects should NOT exist in isolation. They must have pre-existing relationships, \
@@ -301,6 +327,18 @@ IMPORTANT:
 - Include supporting documents (newspaper articles, lab reports, phone messages, etc.)
 - CROSS-EPISODE REUSE: Some evidence introduced early should contain details that only \
 become meaningful in later episodes. This is crucial for the "breadcrumb trail" effect.
+
+SUSPECT BALANCE (CRITICAL — even distribution of evidence):
+- Evidence must be spread across ALL suspects, not concentrated on the killer.
+- At least 2-3 evidence items should make each innocent suspect look suspicious (document \
+their lies, suspicious behavior, concealed motives — even if ultimately unrelated to the murder).
+- No more than ~30% of non-form, non-letter evidence should directly relate to the killer.
+- Many evidence items should implicate MULTIPLE suspects at once (e.g., a phone log showing \
+calls between two suspects, an SMS where one suspect gossips about another, a receipt that \
+contradicts two alibis).
+- Plan "red herring" evidence that points strongly at innocent suspects — these will keep \
+the player guessing.
+- The killer should NOT receive noticeably more evidence than other suspects in early/middle episodes.
 
 EVIDENCE ANONYMIZATION (CRITICAL):
 - The evidence plan (id, title, brief_description, clue_reveals) is internal and can \
@@ -540,6 +578,15 @@ It is NOT a source of additional content to include.
 - If a suspect is the killer, their evidence may hint at subtle inconsistencies \
 (only if that is part of this evidence's purpose), but must NOT reveal information \
 beyond this item's designated scope.
+
+SUSPECT BALANCE (CRITICAL):
+- This evidence item should NOT single out the killer unless it is explicitly designed \
+to do so in its clue_reveals.
+- Where possible, reference or implicate MULTIPLE suspects — mention other names, \
+show interactions between suspects, or include details that cast suspicion broadly.
+- Innocent suspects should appear just as suspicious as the killer in early/middle-episode evidence.
+- Phone logs, SMS logs, and emails should show conversations with MULTIPLE suspects, \
+not only killer-related contacts.
 
 LENGTH GUIDELINES (important — keep evidence concise):
 - Interrogation transcripts: 15-20 exchanges maximum (1-2 printed pages).

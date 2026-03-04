@@ -43,6 +43,17 @@ class Victim(BaseModel):
     portrait_filename: str | None = None
 
 
+class SuspectSketch(BaseModel):
+    """High-level suspect concept generated alongside the truth."""
+
+    name: str
+    role: str  # e.g. "business partner", "ex-lover", "neighbor"
+    apparent_motive: str  # Why they look guilty (red herring for innocents)
+    secret: str  # A hidden fact that creates suspicion
+    relationship_to_other_suspects: str  # How they connect to other suspects
+    is_killer: bool = False
+
+
 class CaseTruth(BaseModel):
     """The hidden ground truth of the mystery — only the 'director' sees this."""
 
@@ -54,6 +65,7 @@ class CaseTruth(BaseModel):
     timeline: list[TimelineEvent] = []
     crime_scene: str  # Location description
     key_evidence_summary: str | None = None  # Brief note on what proves the killer
+    suspect_sketches: list[SuspectSketch] = []  # All suspects planned with the truth
 
 
 class CasePersonnel(BaseModel):
