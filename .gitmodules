@@ -1,0 +1,3 @@
+[submodule "caseclosed-generator/cases"]
+	path = caseclosed-generator/cases
+	url = git@github.com:gronnmann/caseclosed-cases.git
