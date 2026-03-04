@@ -16,6 +16,9 @@ venv/
 # Generated cases
 cases/
 
+# Debug logs
+logs/
+
 # IDE
 .idea/
 .vscode/

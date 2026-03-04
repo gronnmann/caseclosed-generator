@@ -151,17 +151,17 @@ class PhoneLog(BaseModel):
 class SmsMessage(BaseModel):
     timestamp: str  # e.g. "2024-03-15 14:32"
     direction: Literal["incoming", "outgoing"]
-    other_party: str  # Name or phone number
     text: str
 
 
 class SmsLog(BaseModel):
-    """An SMS / text message log for a person."""
+    """An SMS conversation thread between two people."""
 
     type: Literal["sms_log"] = "sms_log"
     plan_id: str
     owner_name: str
     phone_number: str
+    other_party: str  # Name or phone number of the conversation partner
     messages: list[SmsMessage]
 
 

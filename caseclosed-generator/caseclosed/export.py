@@ -378,10 +378,6 @@ def _interrogation_typst(item: InterrogationReport) -> str:
   row-gutter: 0.6em,
 {rows}
 )
-
-#v(1em)
-#line(length: 100%)
-#align(center)[#text(size: 9pt)[_End of transcript_]]
 """
 
 
@@ -1068,7 +1064,7 @@ def _sms_typst(item: SmsLog) -> str:
     for msg in item.messages:
         align = "right" if msg.direction == "outgoing" else "left"
         bg = "#e1f0ff" if msg.direction == "outgoing" else "#f0f0f0"
-        label = item.owner_name if msg.direction == "outgoing" else msg.other_party
+        label = item.owner_name if msg.direction == "outgoing" else item.other_party
         msgs.append(
             f'#align({align})[\n'
             f'  #box(fill: rgb("{bg}"), radius: 6pt, inset: 8pt, width: 70%)[\n'
@@ -1090,6 +1086,7 @@ def _sms_typst(item: SmsLog) -> str:
   stroke: none,
   [*Owner:*], [{item.owner_name}],
   [*Phone Number:*], [{item.phone_number}],
+  [*Conversation with:*], [{item.other_party}],
 )
 
 #v(0.5em)
@@ -1104,7 +1101,7 @@ def _sms_latex(item: SmsLog) -> str:
     msgs: list[str] = []
     for msg in item.messages:
         align = "flushright" if msg.direction == "outgoing" else "flushleft"
-        label = _latex_escape(item.owner_name if msg.direction == "outgoing" else msg.other_party)
+        label = _latex_escape(item.owner_name if msg.direction == "outgoing" else item.other_party)
         msgs.append(
             f"\\begin{{{align}}}\n"
             f"\\fbox{{\\parbox{{0.7\\textwidth}}{{\n"
@@ -1128,6 +1125,7 @@ def _sms_latex(item: SmsLog) -> str:
 \\begin{{tabular}}{{@{{}}ll@{{}}}}
 \\textbf{{Owner:}} & {_latex_escape(item.owner_name)} \\\\
 \\textbf{{Phone Number:}} & {_latex_escape(item.phone_number)} \\\\
+\\textbf{{Conversation with:}} & {_latex_escape(item.other_party)} \\\\
 \\end{{tabular}}
 
 \\bigskip\\hrule\\bigskip
@@ -1141,7 +1139,7 @@ def _sms_html(item: SmsLog) -> str:
     msgs: list[str] = []
     for msg in item.messages:
         bg = "#e1f0ff" if msg.direction == "outgoing" else "#f0f0f0"
-        label = _html_escape(item.owner_name if msg.direction == "outgoing" else msg.other_party)
+        label = _html_escape(item.owner_name if msg.direction == "outgoing" else item.other_party)
         ml = "auto" if msg.direction == "outgoing" else "0"
         mr = "0" if msg.direction == "outgoing" else "auto"
         msgs.append(
@@ -1168,6 +1166,7 @@ def _sms_html(item: SmsLog) -> str:
 <div class="meta">
   <p><strong>Owner:</strong> {_html_escape(item.owner_name)}</p>
   <p><strong>Phone Number:</strong> {_html_escape(item.phone_number)}</p>
+  <p><strong>Conversation with:</strong> {_html_escape(item.other_party)}</p>
 </div>
 <hr>
 {chat}

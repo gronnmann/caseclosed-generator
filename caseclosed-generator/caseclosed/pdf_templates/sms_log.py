@@ -16,7 +16,11 @@ def render_sms_log(item: SmsLog, path: Path) -> None:
     story: list[object] = []
 
     story.append(Paragraph("SMS MESSAGE LOG", TITLE_STYLE))
-    story.append(meta_table([("Owner:", item.owner_name), ("Phone Number:", item.phone_number)]))
+    story.append(meta_table([
+        ("Owner:", item.owner_name),
+        ("Phone Number:", item.phone_number),
+        ("Conversation with:", item.other_party),
+    ]))
     story.append(hr())
 
     page_width = A4[0] - 4 * cm  # usable width
@@ -25,7 +29,7 @@ def render_sms_log(item: SmsLog, path: Path) -> None:
     for msg in item.messages:
         is_outgoing = msg.direction == "outgoing"
         bg = colors.HexColor("#e1f0ff") if is_outgoing else colors.HexColor("#f0f0f0")
-        label = item.owner_name if is_outgoing else msg.other_party
+        label = item.owner_name if is_outgoing else item.other_party
 
         bubble_content = [
             [Paragraph(f'<font size="7" color="#666666">{esc(msg.timestamp)} &mdash; {esc(label)}</font>', NORMAL)],

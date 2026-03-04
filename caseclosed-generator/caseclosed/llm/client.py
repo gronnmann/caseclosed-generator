@@ -1,10 +1,14 @@
 import time
+from datetime import datetime
+from pathlib import Path
 
 from openai import OpenAI
 from pydantic import BaseModel
 from rich.console import Console
 
 from caseclosed.config import settings
+
+ERROR_LOG_DIR = Path("./logs/llm_errors")
 
 console = Console()
 
@@ -39,6 +43,7 @@ def generate_structured[T: BaseModel](
     model = model or settings.default_model
 
     last_error: Exception | None = None
+    last_raw_content: str | None = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             completion = client.chat.completions.parse(
@@ -56,6 +61,11 @@ def generate_structured[T: BaseModel](
             return message.parsed
         except Exception as e:
             last_error = e
+            # Try to extract raw LLM response content for debugging
+            raw = _extract_raw_content(e)
+            if raw:
+                last_raw_content = raw
+            _log_llm_error(response_model.__name__, attempt, messages, e, last_raw_content)
             if attempt < MAX_RETRIES:
                 console.print(
                     f"  [yellow]Attempt {attempt}/{MAX_RETRIES} failed: {e}[/yellow]"
@@ -68,9 +78,75 @@ def generate_structured[T: BaseModel](
                 console.print(
                     f"  [red]Attempt {attempt}/{MAX_RETRIES} failed: {e}[/red]"
                 )
-                print(e.with_traceback)
 
     raise last_error  # type: ignore[misc]
+
+
+def _extract_raw_content(error: Exception) -> str | None:
+    """Try to extract the raw LLM response string from a validation error."""
+    # Pydantic ValidationError stores the original input
+    if hasattr(error, "errors"):
+        for err in error.errors():
+            inp = err.get("input")
+            if isinstance(inp, str) and len(inp) > 50:
+                return inp
+    # Check string representation for input_value
+    err_str = str(error)
+    if "input_value=" in err_str:
+        start = err_str.find("input_value='")
+        if start != -1:
+            start += len("input_value='")
+            end = err_str.find("', input_type=", start)
+            if end != -1:
+                return err_str[start:end]
+    return None
+
+
+def _log_llm_error(
+    model_name: str,
+    attempt: int,
+    messages: list[dict[str, str]],
+    error: Exception,
+    raw_content: str | None = None,
+) -> None:
+    """Write a failed LLM response to a log file for debugging."""
+    try:
+        ERROR_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{ts}_{model_name}_attempt{attempt}.txt"
+        path = ERROR_LOG_DIR / filename
+
+        error_detail = ""
+        if hasattr(error, "__cause__") and error.__cause__:
+            error_detail += f"Cause: {error.__cause__}\n"
+        for attr in ("response", "body"):
+            if hasattr(error, attr):
+                error_detail += f"{attr}: {getattr(error, attr)}\n"
+
+        content = (
+            f"Model: {model_name}\n"
+            f"Attempt: {attempt}/{MAX_RETRIES}\n"
+            f"Time: {ts}\n"
+            f"Error type: {type(error).__name__}\n"
+            f"Error: {error}\n"
+            f"\n{'='*60}\n"
+            f"ERROR DETAILS:\n{error_detail}\n"
+        )
+        if raw_content:
+            content += (
+                f"\n{'='*60}\n"
+                f"RAW LLM RESPONSE (full):\n{raw_content}\n"
+            )
+        content += f"\n{'='*60}\nMESSAGES SENT:\n"
+        for msg in messages:
+            role = msg.get("role", "?")
+            text = msg.get("content", "")[:5000]
+            content += f"\n--- {role} ---\n{text}\n"
+
+        path.write_text(content, encoding="utf-8")
+        console.print(f"  [dim]Error logged to {path}[/dim]")
+    except Exception:
+        pass  # Don't fail on logging failures
 
 
 def generate_text(

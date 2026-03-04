@@ -446,17 +446,18 @@ Generate a realistic phone call log. Include:
 Make the timestamps realistic and consistent with the case timeline. Include calls \
 that are relevant to the investigation mixed with mundane everyday calls.""",
         "sms_log": """\
-Generate a realistic SMS / text message log. Include:
+Generate a realistic SMS conversation thread between two people. This represents \
+a single chat thread (like opening a conversation with one contact). Include:
 - owner_name: who this phone belongs to
-- phone_number: their phone number
-- messages: a list of text messages, each with:
+- phone_number: the owner's phone number
+- other_party: name or phone number of the person they're texting
+- messages: a list of text messages in the conversation, each with:
   - timestamp: date and time (e.g. "2024-03-15 14:32")
   - direction: "incoming" or "outgoing"
-  - other_party: name or phone number of the other person
   - text: the actual message content
 Make the timestamps realistic and consistent with the case timeline. Include messages \
 that are relevant to the investigation mixed with mundane everyday texts. Messages should \
-feel natural and casual, like real text conversations.""",
+feel natural and casual, like a real text conversation between two people.""",
         "email": """\
 Generate a realistic email message. Include:
 - from_address: sender's email

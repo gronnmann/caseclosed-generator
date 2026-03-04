@@ -239,11 +239,12 @@ def _display_evidence_item(evidence: EvidenceItem) -> None:
         ))
     elif isinstance(evidence, SmsLog):
         lines = "\n".join(
-            f"  {m.timestamp} | {m.direction:>8} | {m.other_party}\n    {m.text}"
+            f"  {m.timestamp} | {m.direction:>8}\n    {m.text}"
             for m in evidence.messages
         )
         console.print(Panel(
-            f"Owner: {evidence.owner_name} ({evidence.phone_number})\n\n{lines}",
+            f"Owner: {evidence.owner_name} ({evidence.phone_number})\n"
+            f"Conversation with: {evidence.other_party}\n\n{lines}",
             title=f"[magenta]SMS Log:[/magenta] {evidence.plan_id}",
         ))
     elif isinstance(evidence, Email):

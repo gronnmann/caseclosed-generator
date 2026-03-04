@@ -397,6 +397,30 @@ def _suggest_reconciliation(case: Case, edited_target: str) -> None:
         console.print("[dim]Use 'caseclosed edit' to update these if needed. Or edit case.json directly.[/dim]")
 
 
+# --- View Command ---
+
+
+@app.command()
+def view(
+    case_id: Annotated[str | None, typer.Argument(help="Case ID (opens directly). Omit to browse all.")] = None,
+    port: Annotated[int, typer.Option("--port", "-p", help="Port to serve on")] = 5555,
+    host: Annotated[str, typer.Option("--host", "-h", help="Host to bind to")] = "127.0.0.1",
+) -> None:
+    """Launch a web viewer to browse and edit cases."""
+    from caseclosed.viewer import create_app
+
+    flask_app = create_app()
+    url = f"http://{host}:{port}"
+    if case_id:
+        url += f"/case/{case_id}"
+    console.print(f"[bold green]Starting viewer at:[/bold green] {url}")
+    console.print("[dim]Press Ctrl+C to stop.[/dim]")
+
+    import webbrowser
+    webbrowser.open(url)
+    flask_app.run(host=host, port=port, debug=False)
+
+
 # --- Redo Command ---
 
 _REDO_TARGETS = [
