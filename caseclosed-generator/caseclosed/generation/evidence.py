@@ -67,11 +67,20 @@ def generate_evidence_content(
 
 def generate_evidence_image(
     case: Case,
-    evidence: ImageEvidence,
+    evidence: ImageEvidence | InstagramPost,
 ) -> str:
-    """Generate the actual image for an ImageEvidence item. Returns the filename."""
-    reference_images = _collect_reference_images(case, evidence)
-    image_data = generate_image(evidence.image_prompt, reference_images=reference_images or None)
+    """Generate an image for any evidence type with image_prompt. Returns the filename."""
+    reference_images = (
+        _collect_reference_images(case, evidence)
+        if isinstance(evidence, ImageEvidence)
+        else []
+    )
+    aspect_ratio = "1:1" if isinstance(evidence, InstagramPost) else None
+    image_data = generate_image(
+        evidence.image_prompt,
+        reference_images=reference_images or None,
+        aspect_ratio=aspect_ratio,
+    )
     filename = f"{evidence.plan_id}.png"
     save_image(case.id, filename, image_data)
     return filename
@@ -79,7 +88,7 @@ def generate_evidence_image(
 
 def edit_evidence_image(
     case: Case,
-    evidence: ImageEvidence,
+    evidence: ImageEvidence | InstagramPost,
     edit_instructions: str,
 ) -> str:
     """Edit an existing generated image with instructions. Returns the filename."""

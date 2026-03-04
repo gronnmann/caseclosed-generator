@@ -581,8 +581,8 @@ def _confirm_image_action(
         return ("edit_prompt", response)
 
 
-def _generate_image_inline(case: Case, evidence: ImageEvidence) -> None:
-    """Generate the actual image for an ImageEvidence item right after content approval.
+def _generate_image_inline(case: Case, evidence: ImageEvidence | InstagramPost) -> None:
+    """Generate the actual image for an evidence item with image_prompt.
 
     Shows the prompt for approval/editing, generates, then confirms.
     """
@@ -672,8 +672,8 @@ def _step_evidence_content(case: Case) -> None:
                 save_case(case)
                 console.print(f"  [green]✓[/green] Accepted: {plan_item.title} ({plan_item.type})")
 
-                # For image evidence, generate the actual image immediately
-                if isinstance(evidence, ImageEvidence):
+                # For evidence with images, generate the actual image immediately
+                if isinstance(evidence, (ImageEvidence, InstagramPost)) and evidence.image_prompt:
                     _generate_image_inline(case, evidence)
 
                 break
@@ -691,10 +691,12 @@ def _step_evidence_content(case: Case) -> None:
 
 
 def _step_images(case: Case) -> None:
-    """Generate images for ImageEvidence items (resumable, with approval)."""
-    image_items = [
+    """Generate images for evidence items that need them (resumable, with approval)."""
+    image_items: list[ImageEvidence | InstagramPost] = [
         e for e in case.evidence
-        if isinstance(e, ImageEvidence) and e.image_filename is None
+        if isinstance(e, (ImageEvidence, InstagramPost))
+        and e.image_filename is None
+        and e.image_prompt
     ]
 
     if not image_items:
@@ -703,15 +705,21 @@ def _step_images(case: Case) -> None:
         save_case(case)
         return
 
-    total = len([e for e in case.evidence if isinstance(e, ImageEvidence)])
+    total = len([
+        e for e in case.evidence
+        if isinstance(e, (ImageEvidence, InstagramPost)) and e.image_prompt
+    ])
     done = total - len(image_items)
 
     for i, img_evidence in enumerate(image_items, start=done + 1):
         while True:
-            console.print(f"\n[bold blue]Image [{i}/{total}]: {img_evidence.caption}[/bold blue]")
+            label = (
+                img_evidence.caption
+                if isinstance(img_evidence, ImageEvidence)
+                else f"@{img_evidence.username}"
+            )
+            console.print(f"\n[bold blue]Image [{i}/{total}]: {label}[/bold blue]")
             console.print(Panel(
-                f"[bold]Caption:[/bold] {img_evidence.caption}\n"
-                f"[bold]Location:[/bold] {img_evidence.location_context or 'N/A'}\n\n"
                 f"[bold]Prompt:[/bold]\n{img_evidence.image_prompt}",
                 title=f"Image prompt: {img_evidence.plan_id}",
             ))
