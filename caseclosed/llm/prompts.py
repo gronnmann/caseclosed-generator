@@ -147,7 +147,7 @@ For each suspect sketch above, flesh them out into a full suspect:
 secrets). Build on the relationship_to_other_suspects from the sketches and expand them.
 
 INTER-CHARACTER INTRIGUES (CRITICAL):
-- The suspects should NOT exist in isolation. They must have pre-existing relationships, \
+- The suspects should NOT exist in isolation. They can have pre-existing relationships, \
 conflicts, alliances, and secrets that involve each other.
 - Examples: business rivalries, affairs, debts owed, old grudges, shared alibis that \
 contradict, one suspect covering for another, blackmail between suspects, family tensions.
@@ -205,31 +205,28 @@ once they're sure of the answer.
 - For episodes after the first, the intro letter should explain what the player just solved in the previous episode,
 and which evidence they used. This only applies to answers to the last episode, and not other uncovered things.
 - The first episode should introduce the case broadly
-- Each subsequent episode focuses on a specific aspect (alibis, forensics, connections, etc.)
+- Each subsequent episode forwards the investigation by making the player connect the dots, get an aha-moment, and then 
+get get unlocked new episode. For example, if the player uncovers a secret relationship, the next episode might add an
+ interrogation of one of the suspects involved in that relationship, or a new piece of evidence related to it.
 - The final episode's objective should lead the player to identify the killer
 - Objectives should be concrete: "Who was lying about being at the restaurant?" not "Find clues"
 
 PACING & SUSPECT FUNNEL (CRITICAL):
-- The mystery must follow a "wide-to-narrow" suspect funnel:
-  * Early episodes: ALL suspects look equally plausible. Present each suspect's apparent \
-motive and surface-level alibi so the player sees everyone as a potential killer.
-  * Middle episodes: Evidence begins to clear some suspects (their alibis check out, their \
-secrets turn out to be unrelated to the murder). But at least 2-3 suspects should still \
-seem viable.
-  * Late episodes: Contradictions and forensic details narrow it down. Only the final \
-episode should give the player enough to definitively identify the killer.
-- Do NOT single out or point at specific suspects in early or middle episodes. Keep early and middle episode \
-objectives broad rather than naming suspects. They should instead be done to uncover things, intrigues, lies, etc.
+The mystery must follow a "layered suspicion" model:
+- Most suspects should remain plausibly suspicious throughout most of the investigation.
+- New information should change how the player interprets suspects, not simply remove them from suspicion.
+- Only the final episode should give the player enough to definitively identify the killer.
+- Do NOT single out or point at specific suspects in early or middle episodes.
 - The first episode should always have some interrogation reports and Person of Interest forms. 
 There can be mutiple interrogation reports between suspects between different episodes,
-and some of them can be introduced later, but we need atleast som early.
+and some of them can be introduced later, but we need atleast some early.
 - Use the suspects' secrets and lies strategically: innocent suspects' secrets should \
 create suspicion early on but be explained away BY EVIDENCE later, keeping the player guessing.
 - Do NOT hint at which specific evidence items the player should look at. The player must \
 discover connections on their own.
 - NEVER write in the letter that someone is innocent or guilty (till the last letter).
 This is up for the player to determine.
-- Create intrigues between the characters, we find out people have much to lose etc. More people should have a plausible motive, even if they are innocent.
+- Create intrigues between the characters, we find out people have much to lose etc. Multiple people should have a plausible motive, even if they are innocent.
 The player should be kept guessing for as long as possible.
 - Do NOT give instructions pointing directly at any specific evidence item.
 - VERY IMPORTANT: The episodes should feel like a story progressing. The player should \
@@ -247,13 +244,6 @@ Hint 2: Directs attention to a specific type of document
 Hint 3: Points clearly to the contradiction, but does not state the answer
 
 LOOSE EXAMPLES OF EPISODE OBJECTIVES (for inspiration only — do NOT copy these):
-
-Example 1:
-- Objective 1: What is Harper not telling us? (uncovers a secret relationship or a secret. does not have to be the killer)
-- Objective 2: What is the password to Liam's phone? (uncovers some sketchy messages, but not the full truth)
-- Objective 3: Who is lying about their alibi? (narrows down suspects, but can be multiple people)
-- Objective 4: What hidden secrets can you uncover? (uncovers key secrets that point towards the killer, but still not definitive)
-- Objective 5: Who is the killer? What is your reasoning? (the final reveal, but the player must connect the dots on their own based on all the evidence)
 
 Example 2:
 - Objective 1: What was the cause of death?
@@ -283,7 +273,7 @@ def evidence_plan_prompt(
     truth = case.truth
 
     episodes_summary = "\n".join(
-        str(e)
+        f"Episode: {e.title} - objective {e.objective} - Hints (need to make sense with hints): {e.hints} - Intro letter: {e.intro_letter}"
         for e in case.episodes
     )
     suspects_summary = "\n".join(
@@ -322,17 +312,22 @@ For each evidence item, specify:
 
 IMPORTANT:
 - Each suspect should have an interrogation report AND a person of interest form
-- Include at least one intro letter (episode 1) and one solution letter (final)
+- Every episode should have a intro letter. The final episode should have one solution letter (final)
 - Include at least 2-3 image evidence items (crime scene, key physical evidence, etc.)
 - Include supporting documents (newspaper articles, lab reports, phone messages, etc.)
 - CROSS-EPISODE REUSE: Some evidence introduced early should contain details that only \
 become meaningful in later episodes. This is crucial for the "breadcrumb trail" effect.
+- Evidence items which connect other evidence items are VERY ENCOURAGED. For example, a email from an unknown sender early on,
+where we later find something that ties that email with a suspect. That connection can, but must not be the only use of the 
+email, it can also contain other clues. It can for example be contain some relevant things, and we only discover the connection in later episodes.
+This applies to all kinds of evidence, not only emails.
 
 SUSPECT BALANCE (CRITICAL — even distribution of evidence):
 - Evidence must be spread across ALL suspects, not concentrated on the killer.
 - At least 2-3 evidence items should make each innocent suspect look suspicious (document \
 their lies, suspicious behavior, concealed motives — even if ultimately unrelated to the murder).
 - No more than ~30% of non-form, non-letter evidence should directly relate to the killer.
+- The evidence shouldn't point at the killer too much in the early stages.
 - Many evidence items should implicate MULTIPLE suspects at once (e.g., a phone log showing \
 calls between two suspects, an SMS where one suspect gossips about another, a receipt that \
 contradicts two alibis).
@@ -352,6 +347,23 @@ email addresses, etc. However, if its natural in that context, names can be incl
 - The clue_reveals field should describe what the player learns, using the actual names.
 - This creates investigative depth: players must study POI forms to connect documents \
 to suspects, rather than having it handed to them.\
+- Puzzles are very welcome: we want the player to connect the dots. Examples can be ciphers and similar.
+
+SHORT SUMMARY OF EVIDENCE TYPES:
+- interrogation - Interrogation between suspect and detective
+- poi_form - Person of interest form (gives things like name, PICTURE of suspect, phone number, as well as 
+if they have earlier been arrested or convicted), as well as signature giving handwriting.
+NOTE that it hardly helps establish things other than job titles, whenever they have been arrested (that would 
+need followup in interrogation), and hard facts.
+- letter - Letter from lead detective to players (detectives)
+- image - self-explainatory
+- phone_log - Logs of phone calls from the victim's or someone else's phone.
+- sms_log - SMS exchange extracted from the victim's phone.
+- handwritten_note - Handwritten note by someone. Uses that person's handwriting.
+- instagram_post - Instagram Post
+- facebook_post - Facebook post
+- Invoice - invoice for something
+- Receipt - receipt for something
 """
     return [_system(case.language), _user(content)]
 
