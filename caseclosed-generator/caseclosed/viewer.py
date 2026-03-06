@@ -548,8 +548,8 @@ function renderSuspects() {
     if (s.personality_traits && s.personality_traits.length) {
       html += field('Personality', s.personality_traits.map(x => `<span class="tag">${esc(x)}</span>`).join(' '));
     }
-    if (s.relationships && Object.keys(s.relationships).length) {
-      html += field('Relationships', Object.entries(s.relationships).map(([k,v]) => `<strong>${esc(k)}:</strong> ${esc(v)}`).join('<br>'));
+    if (s.relationships && s.relationships.length) {
+      html += field('Relationships', s.relationships.map(r => `<strong>${esc(r.person)}:</strong> ${esc(r.description)}`).join('<br>'));
     }
 
     // Physical details (collapsible)

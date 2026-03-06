@@ -142,9 +142,9 @@ For each suspect sketch above, flesh them out into a full suspect:
 - Add personal secrets that create suspicion but may be unrelated to the murder
 - Include full personal details (physical description, contact info, etc.) for their POI forms
 - Personality traits that come through in interrogation
-- "relationships": a dict mapping other suspect names to a short description of their \
-relationship and any tensions, grudges, alliances, or shared secrets. Build on the \
-relationship_to_other_suspects from the sketches and expand them.
+- "relationships": a list of objects with "person" (suspect name) and "description" \
+(short description of their relationship and any tensions, grudges, alliances, or shared \
+secrets). Build on the relationship_to_other_suspects from the sketches and expand them.
 
 INTER-CHARACTER INTRIGUES (CRITICAL):
 - The suspects should NOT exist in isolation. They must have pre-existing relationships, \
@@ -179,7 +179,7 @@ def episodes_prompt(
         f"    Truth behind alibi: {s.alibi_truth}\n"
         f"    Secrets: {'; '.join(s.secrets) if s.secrets else 'none'}\n"
         f"    Personality: {', '.join(s.personality_traits) if s.personality_traits else 'N/A'}\n"
-        f"    Relationships with other suspects: {'; '.join(f'{k}: {v}' for k, v in s.relationships.items()) if s.relationships else 'none'}\n"
+        f"    Relationships with other suspects: {'; '.join(f'{r.person}: {r.description}' for r in s.relationships) if s.relationships else 'none'}\n"
         f"    Is the killer: {s.is_killer}"
         for s in case.suspects
     )
@@ -283,12 +283,12 @@ def evidence_plan_prompt(
     truth = case.truth
 
     episodes_summary = "\n".join(
-        f"  Episode {e.number}: \"{e.title}\" — Objective: {e.objective}"
+        str(e)
         for e in case.episodes
     )
     suspects_summary = "\n".join(
         f"  - {s.name}: {s.occupation}, motive: {s.motive}, "
-        f"relationships: {'; '.join(f'{k}: {v}' for k, v in s.relationships.items()) if s.relationships else 'none'}"
+        f"relationships: {'; '.join(f'{r.person}: {r.description}' for r in s.relationships) if s.relationships else 'none'}"
         for s in case.suspects
     )
 
@@ -372,7 +372,7 @@ def evidence_content_prompt(
         )
         if suspect:
             relationships_str = "; ".join(
-                f"{k}: {v}" for k, v in suspect.relationships.items()
+                f"{r.person}: {r.description}" for r in suspect.relationships
             ) if suspect.relationships else "none"
             suspect_info = f"""
 SUSPECT DETAILS (for consistency):
