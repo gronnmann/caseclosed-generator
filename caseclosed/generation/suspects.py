@@ -15,17 +15,18 @@ class SuspectsResponse(BaseModel):
 def generate_suspects(
     case: Case,
     *,
-    edit_instructions: str | None = None,
-    current_suspects: list[Suspect] | None = None,
+    edit_history: list[tuple[str, str]] | None = None,
 ) -> list[Suspect]:
-    """Generate suspects for the mystery."""
+    """Generate suspects for the mystery.
+
+    edit_history: list of (assistant_json, user_edit_instruction) tuples
+    representing the full conversation history of edits.
+    """
     messages = suspects_prompt(case)
-    if current_suspects and edit_instructions:
-        wrapper = SuspectsResponse(suspects=current_suspects)
-        messages.extend([
-            {"role": "assistant", "content": wrapper.model_dump_json(indent=2)},
-            {"role": "user", "content": f"Edit the above output according to these instructions:\n\n{edit_instructions}"},
-        ])
+    if edit_history:
+        for assistant_json, user_edit in edit_history:
+            messages.append({"role": "assistant", "content": assistant_json})
+            messages.append({"role": "user", "content": f"Edit the above output according to these instructions:\n\n{user_edit}"})
     response = generate_structured(SuspectsResponse, messages)
     # Strip portrait fields — the LLM may hallucinate values for these,
     # but they should only be set by actual image generation.

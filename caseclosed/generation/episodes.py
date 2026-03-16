@@ -15,16 +15,17 @@ class EpisodesResponse(BaseModel):
 def generate_episodes(
     case: Case,
     *,
-    edit_instructions: str | None = None,
-    current_episodes: list[Episode] | None = None,
+    edit_history: list[tuple[str, str]] | None = None,
 ) -> list[Episode]:
-    """Generate the episode structure for the mystery."""
+    """Generate the episode structure for the mystery.
+
+    edit_history: list of (assistant_json, user_edit_instruction) tuples
+    representing the full conversation history of edits.
+    """
     messages = episodes_prompt(case)
-    if current_episodes and edit_instructions:
-        wrapper = EpisodesResponse(episodes=current_episodes)
-        messages.extend([
-            {"role": "assistant", "content": wrapper.model_dump_json(indent=2)},
-            {"role": "user", "content": f"Edit the above output according to these instructions:\n\n{edit_instructions}"},
-        ])
+    if edit_history:
+        for assistant_json, user_edit in edit_history:
+            messages.append({"role": "assistant", "content": assistant_json})
+            messages.append({"role": "user", "content": f"Edit the above output according to these instructions:\n\n{user_edit}"})
     response = generate_structured(EpisodesResponse, messages)
     return response.episodes

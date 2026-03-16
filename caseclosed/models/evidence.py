@@ -106,7 +106,6 @@ class ImageEvidence(BaseModel):
     type: Literal["image"] = "image"
     plan_id: str
     image_prompt: str  # Detailed prompt for AI image generation
-    caption: str
     location_context: str | None = None
     image_filename: str | None = None  # Set after generation, e.g. "crime-scene.png"
 

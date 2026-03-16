@@ -6,7 +6,22 @@ and maintain consistency with previously established facts.
 """
 
 from caseclosed.models.case import Case, CaseTruth
-from caseclosed.models.evidence import EvidencePlanItem
+from caseclosed.models.evidence import (
+    Email,
+    EvidencePlanItem,
+    FacebookPost,
+    HandwrittenNote,
+    ImageEvidence,
+    InstagramPost,
+    InterrogationReport,
+    Invoice,
+    Letter,
+    PersonOfInterestForm,
+    PhoneLog,
+    RawText,
+    Receipt,
+    SmsLog,
+)
 
 
 SYSTEM_PROMPT = """\
@@ -349,6 +364,23 @@ email addresses, etc. However, if its natural in that context, names can be incl
 to suspects, rather than having it handed to them.\
 - Puzzles are very welcome: we want the player to connect the dots. Examples can be ciphers and similar.
 
+MULTI-EVIDENCE DEDUCTION CHAINS (CRITICAL — the core game mechanic):
+- The mystery should be designed so that NO SINGLE piece of evidence reveals the killer.
+- Design evidence in "deduction clusters" — groups of 2-4 evidence items that only \
+make sense when cross-referenced together. For example:
+  * A phone log shows a call to an unknown number at 23:15 (evidence A)
+  * A POI form reveals that number belongs to suspect X (evidence B)
+  * An interrogation has suspect X claiming they were asleep by 22:00 (evidence C)
+  * Only by combining A+B+C does the player realize X lied about their alibi.
+- Early-episode evidence should plant SEEDS — details that seem unremarkable alone \
+but become crucial when later evidence provides context.
+- Each episode's objective should require the player to combine at least 2 evidence items.
+- The final identification of the killer should require connecting evidence from \
+MULTIPLE episodes — not just the last one.
+- Include "bridging evidence" — items whose primary purpose is to connect two other \
+pieces (e.g., a receipt that ties a phone number to a location mentioned in an SMS).
+- Avoid "smoking gun" evidence that single-handedly solves the mystery.
+
 SHORT SUMMARY OF EVIDENCE TYPES:
 - interrogation - Interrogation between suspect and detective
 - poi_form - Person of interest form (gives things like name, PICTURE of suspect, phone number, as well as 
@@ -543,6 +575,9 @@ mixed with mundane purchases for realism.""",
         for p in other_plan_items
     )
 
+    # Build compact summaries of already-generated evidence for cross-referencing
+    generated_evidence_summary = _summarize_generated_evidence(case)
+
     # Build personnel context
     personnel_info = ""
     if case.personnel:
@@ -574,6 +609,26 @@ ALL OTHER EVIDENCE ITEMS IN THE CASE (for reference — do NOT include their clu
 ^^^ Each of the items above is responsible for revealing its own clue. Do NOT let this \
 evidence item reveal, hint at, or duplicate information that belongs to another item. \
 Stick strictly to what THIS item is supposed to convey.
+
+ALREADY GENERATED EVIDENCE (use these details for cross-referencing and consistency):
+{generated_evidence_summary}
+
+^^^ These are the ACTUAL contents of evidence items already generated. Use the specific \
+details from them (phone numbers, email addresses, dates, names, identifiers) to create \
+CONNECTIONS with this evidence item. For example:
+- If a POI form established a phone number, use that EXACT number in phone logs or SMS.
+- If an interrogation mentioned a specific time or place, reference that same detail.
+- If an email used a specific address, reference that same address elsewhere.
+This is critical for making the mystery feel cohesive and solvable.
+
+DO NOT REVEAL TOO MUCH (CRITICAL):
+- This evidence item should NOT be a "smoking gun" — it must not single-handedly \
+identify the killer or solve the mystery on its own.
+- Clues should be INDIRECT: they provide one piece of a larger puzzle that the player \
+must assemble by cross-referencing multiple evidence items.
+- If this item implicates the killer, it should equally implicate at least one \
+innocent suspect (unless this is late-game evidence explicitly designed to narrow it down).
+- Think of each evidence item as one fragment — meaningless alone, powerful when combined.
 
 CASE TRUTH (for consistency only — do NOT leak extra facts from this section):
 - Victim: {truth.victim.name}, died at crime scene: {truth.crime_scene}
@@ -630,6 +685,110 @@ Generate content in the case language. Make it feel like an authentic document/e
 from a real investigation.\
 """
     return [_system(case.language), _user(content)]
+
+
+def _summarize_generated_evidence(case: Case) -> str:
+    """Create compact summaries of already-generated evidence with key identifiers.
+
+    This allows the LLM generating new evidence to reference specific details
+    (phone numbers, email addresses, dates, etc.) from previously generated items.
+    """
+    if not case.evidence:
+        return "(none generated yet)"
+
+    summaries: list[str] = []
+    for ev in case.evidence:
+        plan_id = getattr(ev, "plan_id", "?")
+        ev_type = getattr(ev, "type", "?")
+        parts = [f"[{plan_id}] ({ev_type})"]
+
+        if isinstance(ev, PersonOfInterestForm):
+            parts.append(
+                f"  Name: {ev.name} {ev.last_name}"
+                f" | Phone: {ev.phone_country_code}{ev.phone_number}"
+                f" | DOB: {ev.date_of_birth}"
+                f" | ID: {ev.id_number}"
+                f" | Address: {ev.street_address}, {ev.city}"
+                f" | Occupation: {ev.occupation}"
+                f" | Vehicle: {ev.vehicle_plates}"
+            )
+        elif isinstance(ev, InterrogationReport):
+            # Include key claims from the transcript for cross-referencing
+            key_statements: list[str] = []
+            for d in ev.transcript:
+                if d.speaker != ev.interviewer:
+                    key_statements.append(f"{d.speaker}: {d.text}")
+            # Take a representative sample of suspect statements
+            sampled = key_statements[:5]
+            if len(key_statements) > 5:
+                sampled.append(f"... ({len(key_statements) - 5} more statements)")
+            parts.append(
+                f"  Suspect: {ev.suspect_name} | Date: {ev.date}\n"
+                f"  Key statements:\n    " + "\n    ".join(sampled)
+            )
+        elif isinstance(ev, PhoneLog):
+            parties = set(e.other_party for e in ev.entries)
+            parts.append(
+                f"  Owner: {ev.owner_name} | Number: {ev.phone_number}\n"
+                f"  Contacts called: {', '.join(parties)}"
+            )
+        elif isinstance(ev, SmsLog):
+            # Include a few message snippets for context
+            msg_previews = [f"{m.timestamp} [{m.direction}]: {m.text}" for m in ev.messages[:4]]
+            parts.append(
+                f"  Owner: {ev.owner_name} | Number: {ev.phone_number}\n"
+                f"  Conversation with: {ev.other_party}\n"
+                f"  Messages:\n    " + "\n    ".join(msg_previews)
+            )
+        elif isinstance(ev, Email):
+            parts.append(
+                f"  From: {ev.from_address} | To: {ev.to_address}\n"
+                f"  Subject: {ev.subject} | Date: {ev.date}\n"
+                f"  Body: {ev.body_text}"
+            )
+        elif isinstance(ev, Letter):
+            parts.append(
+                f"  From: {ev.sender} | To: {ev.recipient}\n"
+                f"  Type: {ev.letter_type} | Date: {ev.date}"
+            )
+        elif isinstance(ev, HandwrittenNote):
+            parts.append(
+                f"  Author: {ev.author}\n"
+                f"  Content: {ev.content}\n"
+                f"  Context: {ev.context}"
+            )
+        elif isinstance(ev, Invoice):
+            parts.append(
+                f"  Seller: {ev.seller_name} | Buyer: {ev.buyer_name}\n"
+                f"  Invoice #: {ev.invoice_number} | Date: {ev.date} | Total: {ev.total}"
+            )
+        elif isinstance(ev, Receipt):
+            parts.append(
+                f"  Store: {ev.store_name} | Date: {ev.date} | Total: {ev.total}\n"
+                f"  Payment: {ev.payment_method}"
+            )
+        elif isinstance(ev, InstagramPost):
+            parts.append(
+                f"  Username: @{ev.username} | Date: {ev.date}\n"
+                f"  Caption: {ev.caption}"
+                f"  Image prompt: {ev.image_prompt}"
+            )
+        elif isinstance(ev, FacebookPost):
+            parts.append(
+                f"  Author: {ev.author_name} | Date: {ev.date}\n"
+                f"  Content: {ev.content}"
+            )
+        elif isinstance(ev, RawText):
+            parts.append(
+                f"  Format: {ev.format_hint}\n"
+                f"  Content snippet: {ev.content[:150]}"
+            )
+        elif isinstance(ev, ImageEvidence):
+            parts.append(f"  Prompt: {ev.image_prompt}")
+
+        summaries.append("\n".join(parts))
+
+    return "\n\n".join(summaries)
 
 
 def _build_image_type_instructions(case: Case, plan_item: EvidencePlanItem) -> str:

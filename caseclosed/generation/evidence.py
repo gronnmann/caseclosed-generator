@@ -45,10 +45,13 @@ def generate_evidence_content(
     plan_item: EvidencePlanItem,
     already_generated_ids: list[str] | None = None,
     *,
-    edit_instructions: str | None = None,
-    current_evidence: EvidenceItem | None = None,
+    edit_history: list[tuple[str, str]] | None = None,
 ) -> EvidenceItem:
-    """Generate the full content for a single evidence item."""
+    """Generate the full content for a single evidence item.
+
+    edit_history: list of (assistant_json, user_edit_instruction) tuples
+    representing the full conversation history of edits.
+    """
     already_generated_ids = already_generated_ids or []
 
     model_class = _TYPE_MAP.get(plan_item.type)
@@ -56,11 +59,10 @@ def generate_evidence_content(
         raise ValueError(f"Unknown evidence type: {plan_item.type}")
 
     messages = evidence_content_prompt(case, plan_item, already_generated_ids)
-    if current_evidence and edit_instructions:
-        messages.extend([
-            {"role": "assistant", "content": current_evidence.model_dump_json(indent=2)},
-            {"role": "user", "content": f"Edit the above output according to these instructions:\n\n{edit_instructions}"},
-        ])
+    if edit_history:
+        for assistant_json, user_edit in edit_history:
+            messages.append({"role": "assistant", "content": assistant_json})
+            messages.append({"role": "user", "content": f"Edit the above output according to these instructions:\n\n{user_edit}"})
     evidence: EvidenceItem = generate_structured(model_class, messages)
     return evidence
 

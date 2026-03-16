@@ -323,9 +323,9 @@ def _display_evidence_item(evidence: EvidenceItem) -> None:
 
 def _step_truth(case: Case, suspect_count: int | None, episode_count: int | None, difficulty: str | None) -> None:
     """Generate or regenerate the case truth."""
-    edit_instructions: str | None = None
+    edit_history: list[tuple[str, str]] = []
     while True:
-        if edit_instructions:
+        if edit_history:
             console.print("\n[bold blue]Editing case truth...[/bold blue]")
         else:
             console.print("\n[bold blue]Generating case truth...[/bold blue]")
@@ -335,8 +335,7 @@ def _step_truth(case: Case, suspect_count: int | None, episode_count: int | None
             suspect_count=suspect_count,
             episode_count=episode_count,
             difficulty=difficulty,
-            edit_instructions=edit_instructions,
-            current_truth=case.truth if edit_instructions else None,
+            edit_history=edit_history or None,
         )
         if case.truth.victim.name and case.title is None:
             case.title = f"The {case.truth.victim.name} Case"
@@ -355,22 +354,21 @@ def _step_truth(case: Case, suspect_count: int | None, episode_count: int | None
             save_case(case)
             return
         elif action == "edit":
-            edit_instructions = instructions
+            edit_history.append((case.truth.model_dump_json(indent=2), instructions))
         else:
-            edit_instructions = None
+            edit_history = []
 
 
 def _step_suspects(case: Case) -> None:
-    edit_instructions: str | None = None
+    edit_history: list[tuple[str, str]] = []
     while True:
-        if edit_instructions:
+        if edit_history:
             console.print("\n[bold blue]Editing suspects...[/bold blue]")
         else:
             console.print("\n[bold blue]Generating suspects...[/bold blue]")
         case.suspects = generate_suspects(
             case,
-            edit_instructions=edit_instructions,
-            current_suspects=case.suspects if edit_instructions else None,
+            edit_history=edit_history or None,
         )
         _display_suspects(case)
 
@@ -381,9 +379,11 @@ def _step_suspects(case: Case) -> None:
             save_case(case)
             return
         elif action == "edit":
-            edit_instructions = instructions
+            from caseclosed.generation.suspects import SuspectsResponse
+            wrapper = SuspectsResponse(suspects=case.suspects)
+            edit_history.append((wrapper.model_dump_json(indent=2), instructions))
         else:
-            edit_instructions = None
+            edit_history = []
 
 
 def _portrait_exists(case: Case, suspect: Suspect) -> bool:
@@ -463,16 +463,15 @@ def _step_suspect_portraits(case: Case) -> None:
 
 
 def _step_episodes(case: Case) -> None:
-    edit_instructions: str | None = None
+    edit_history: list[tuple[str, str]] = []
     while True:
-        if edit_instructions:
+        if edit_history:
             console.print("\n[bold blue]Editing episodes...[/bold blue]")
         else:
             console.print("\n[bold blue]Generating episodes...[/bold blue]")
         case.episodes = generate_episodes(
             case,
-            edit_instructions=edit_instructions,
-            current_episodes=case.episodes if edit_instructions else None,
+            edit_history=edit_history or None,
         )
         _display_episodes(case)
 
@@ -483,22 +482,23 @@ def _step_episodes(case: Case) -> None:
             save_case(case)
             return
         elif action == "edit":
-            edit_instructions = instructions
+            from caseclosed.generation.episodes import EpisodesResponse
+            wrapper = EpisodesResponse(episodes=case.episodes)
+            edit_history.append((wrapper.model_dump_json(indent=2), instructions))
         else:
-            edit_instructions = None
+            edit_history = []
 
 
 def _step_evidence_plan(case: Case) -> None:
-    edit_instructions: str | None = None
+    edit_history: list[tuple[str, str]] = []
     while True:
-        if edit_instructions:
+        if edit_history:
             console.print("\n[bold blue]Editing evidence plan...[/bold blue]")
         else:
             console.print("\n[bold blue]Planning evidence graph...[/bold blue]")
         case.evidence_plan = generate_evidence_plan(
             case,
-            edit_instructions=edit_instructions,
-            current_plan=case.evidence_plan if edit_instructions else None,
+            edit_history=edit_history or None,
         )
 
         # Wire evidence IDs into episodes
@@ -518,9 +518,11 @@ def _step_evidence_plan(case: Case) -> None:
             save_case(case)
             return
         elif action == "edit":
-            edit_instructions = instructions
+            from caseclosed.generation.evidence_plan import EvidencePlanResponse
+            wrapper = EvidencePlanResponse(evidence_plan=case.evidence_plan)
+            edit_history.append((wrapper.model_dump_json(indent=2), instructions))
         else:
-            edit_instructions = None
+            edit_history = []
 
 
 def _edit_image_prompt(current_prompt: str, edit_instructions: str) -> str:
@@ -650,10 +652,9 @@ def _step_evidence_content(case: Case) -> None:
     done = total - len(remaining)
 
     for i, plan_item in enumerate(remaining, start=done + 1):
-        edit_instructions: str | None = None
-        current_evidence: EvidenceItem | None = None
+        edit_history: list[tuple[str, str]] = []
         while True:
-            if edit_instructions:
+            if edit_history:
                 console.print(f"\n[bold blue]Editing evidence [{i}/{total}]: {plan_item.title}[/bold blue]")
             else:
                 console.print(f"\n[bold blue]Generating evidence [{i}/{total}]: {plan_item.title}[/bold blue]")
@@ -661,8 +662,7 @@ def _step_evidence_content(case: Case) -> None:
 
             evidence = generate_evidence_content(
                 case, plan_item, already_generated_ids,
-                edit_instructions=edit_instructions,
-                current_evidence=current_evidence if edit_instructions else None,
+                edit_history=edit_history or None,
             )
             _display_evidence_item(evidence)
 
@@ -679,11 +679,9 @@ def _step_evidence_content(case: Case) -> None:
 
                 break
             elif action == "edit":
-                edit_instructions = instructions
-                current_evidence = evidence
+                edit_history.append((evidence.model_dump_json(indent=2), instructions))
             else:
-                edit_instructions = None
-                current_evidence = None
+                edit_history = []
 
     case.generation_state.phase = GenerationPhase.IMAGES
     case.generation_state.current_step_detail = None
